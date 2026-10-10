@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <!-- Service: composition root, HTTP-эндпоинты, gRPC-серверы. -->
+  <ItemGroup>
+    <ProjectReference Include="../Training.Infrastructure/Training.Infrastructure.csproj" />
+    <ProjectReference Include="../../Shared/Quorum.Core/Quorum.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- нужен для dotnet ef migrations (startup project) -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

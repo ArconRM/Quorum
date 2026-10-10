@@ -1,0 +1,84 @@
+syntax = "proto3";
+
+package quorum.worker;
+option csharp_namespace = "Quorum.Grpc.Worker";
+
+// GPU-исполнитель (src/Worker). Сейчас — заглушка, но контракт финальный:
+// настоящий инференс подменит только реализацию на Python.
+service InferenceWorker {
+  // Прогон одного учителя по кадрам; предсказания стримятся по мере готовности.
+  rpc RunTeacher (RunTeacherRequest) returns (stream FramePrediction);
+  // Обучение студента; прогресс по эпохам, последнее сообщение — done = true с артефактом и метрикой.
+  rpc TrainStudent (TrainRequest) returns (stream TrainProgress);
+  // Оценка кандидата и текущей версии на отложенной выборке.
+  rpc Evaluate (EvaluateRequest) returns (EvaluateResponse);
+}
+
+message FrameRef {
+  string frame_id = 1;
+  string path = 2;
+}
+
+// Координаты нормированы к [0, 1]: левый верхний угол, ширина, высота.
+message Box {
+  double x = 1;
+  double y = 2;
+  double w = 3;
+  double h = 4;
+  double score = 5;
+}
+
+message RunTeacherRequest {
+  string teacher = 1;     // имя модели-учителя
+  string kind = 2;        // OpenVocabDetector | Vlm | Detector
+  string task = 3;        // Detection | Ocr
+  string prompt = 4;      // текстовый запрос для open-vocab детекторов, например "license plate"
+  repeated FrameRef frames = 5;
+}
+
+message FramePrediction {
+  string frame_id = 1;
+  repeated Box boxes = 2; // Detection
+  string text = 3;        // Ocr
+  double confidence = 4;
+}
+
+message TrainFrame {
+  string frame_id = 1;
+  string path = 2;
+  repeated Box boxes = 3;
+  string text = 4;
+}
+
+message TrainRequest {
+  string job_id = 1;
+  string task = 2;
+  string architecture = 3;  // yolov8n | crnn
+  int32 epochs = 4;
+  string base_artifact = 5; // текущая опубликованная модель, если есть (дообучение)
+  repeated TrainFrame frames = 6;
+}
+
+message TrainProgress {
+  int32 epoch = 1;
+  int32 epochs = 2;
+  double loss = 3;
+  bool done = 4;
+  string artifact = 5;
+  string metric_name = 6;
+  double metric_value = 7;
+}
+
+message EvaluateRequest {
+  string task = 1;
+  string candidate_artifact = 2;
+  string baseline_artifact = 3; // пусто, если опубликованной версии нет
+  repeated TrainFrame holdout = 4;
+}
+
+message EvaluateResponse {
+  string metric_name = 1;
+  double candidate = 2;
+  double baseline = 3;
+  bool has_baseline = 4;
+}

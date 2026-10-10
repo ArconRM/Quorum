@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package quorum.datasets;
+option csharp_namespace = "Quorum.Grpc.Datasets";
+
+// Datasets → Labeling: состав замороженного снимка.
+service SnapshotQuery {
+  rpc GetSnapshotFrames (GetSnapshotFramesRequest) returns (GetSnapshotFramesResponse);
+}
+
+message GetSnapshotFramesRequest {
+  string snapshot_id = 1;
+}
+
+message SnapshotFrame {
+  string frame_id = 1;
+  string path = 2;   // путь внутри общего тома с кадрами
+  string split = 3;  // Train | Holdout
+}
+
+message GetSnapshotFramesResponse {
+  repeated SnapshotFrame frames = 1;
+}

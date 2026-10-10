@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Domain: агрегаты и инварианты. Только общий доменный слой, никаких EF / MassTransit / ASP.NET. -->
+  <ItemGroup>
+    <ProjectReference Include="../../Shared/Quorum.Domain/Quorum.Domain.csproj" />
+  </ItemGroup>
+</Project>

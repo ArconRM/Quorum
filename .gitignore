@@ -1,0 +1,11 @@
+bin/
+obj/
+.vs/
+.idea/
+*.user
+.nuget/
+TestResults/
+.env
+__pycache__/
+*.pyc
+src/Worker/quorum_worker/worker_pb2*.py

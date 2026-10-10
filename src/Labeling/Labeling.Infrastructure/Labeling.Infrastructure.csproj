@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Infrastructure: своя БД (Db/), репозитории, консьюмеры, gRPC-клиенты. -->
+  <ItemGroup>
+    <ProjectReference Include="../Labeling.Application/Labeling.Application.csproj" />
+    <ProjectReference Include="../../Shared/Quorum.Core/Quorum.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Labeling.UnitTests" />
+    <InternalsVisibleTo Include="Labeling.IntegrationTests" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Grpc.Net.ClientFactory" />
+    <PackageReference Include="Google.Protobuf" />
+    <PackageReference Include="Grpc.Tools" PrivateAssets="All" />
+  </ItemGroup>
+  <ItemGroup>
+    <Protobuf Include="../../Shared/Quorum.Application/Protos/datasets.proto" GrpcServices="Client" Link="Protos/datasets.proto" />
+    <Protobuf Include="../../Shared/Quorum.Application/Protos/worker.proto" GrpcServices="Client" Link="Protos/worker.proto" />
+  </ItemGroup>
+</Project>

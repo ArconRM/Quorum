@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package quorum.labeling;
+option csharp_namespace = "Quorum.Grpc.Labeling";
+
+// Labeling → Training: принятые метки прогона (обучающая и отложенная выборки).
+service TrainingSetQuery {
+  rpc GetTrainingSet (GetTrainingSetRequest) returns (GetTrainingSetResponse);
+}
+
+message GetTrainingSetRequest {
+  string run_id = 1;
+}
+
+message LabelBox {
+  double x = 1;
+  double y = 2;
+  double w = 3;
+  double h = 4;
+}
+
+message LabeledFrame {
+  string frame_id = 1;
+  string path = 2;
+  string split = 3;  // Train | Holdout
+  repeated LabelBox boxes = 4;
+  string text = 5;
+}
+
+message GetTrainingSetResponse {
+  string task = 1;
+  repeated LabeledFrame frames = 2;
+}

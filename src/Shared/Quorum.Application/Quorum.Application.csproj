@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Общий application-слой: абстракции, pipeline MediatR, интеграционные контракты (Published Language). -->
+  <ItemGroup>
+    <PackageReference Include="MediatR" />
+    <PackageReference Include="FluentValidation" />
+    <PackageReference Include="FluentValidation.DependencyInjectionExtensions" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Quorum.Domain/Quorum.Domain.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- .proto компилируются в проектах-серверах и проектах-клиентах -->
+    <None Include="Protos/*.proto" />
+  </ItemGroup>
+</Project>

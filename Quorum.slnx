@@ -1,0 +1,50 @@
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/tests/" />
+  <Folder Name="/src/Datasets/">
+    <Project Path="src/Datasets/Datasets.Application/Datasets.Application.csproj" />
+    <Project Path="src/Datasets/Datasets.Domain/Datasets.Domain.csproj" />
+    <Project Path="src/Datasets/Datasets.Infrastructure/Datasets.Infrastructure.csproj" />
+    <Project Path="src/Datasets/Datasets.Service/Datasets.Service.csproj" />
+  </Folder>
+  <Folder Name="/src/Gateway/">
+    <Project Path="src/Gateway/Quorum.Gateway/Quorum.Gateway.csproj" />
+  </Folder>
+  <Folder Name="/src/Identity/">
+    <Project Path="src/Identity/Identity.Application/Identity.Application.csproj" />
+    <Project Path="src/Identity/Identity.Domain/Identity.Domain.csproj" />
+    <Project Path="src/Identity/Identity.Infrastructure/Identity.Infrastructure.csproj" />
+    <Project Path="src/Identity/Identity.Service/Identity.Service.csproj" />
+  </Folder>
+  <Folder Name="/src/Labeling/">
+    <Project Path="src/Labeling/Labeling.Application/Labeling.Application.csproj" />
+    <Project Path="src/Labeling/Labeling.Domain/Labeling.Domain.csproj" />
+    <Project Path="src/Labeling/Labeling.Infrastructure/Labeling.Infrastructure.csproj" />
+    <Project Path="src/Labeling/Labeling.Service/Labeling.Service.csproj" />
+  </Folder>
+  <Folder Name="/src/Shared/">
+    <Project Path="src/Shared/Quorum.Application/Quorum.Application.csproj" />
+    <Project Path="src/Shared/Quorum.Core/Quorum.Core.csproj" />
+    <Project Path="src/Shared/Quorum.Domain/Quorum.Domain.csproj" />
+  </Folder>
+  <Folder Name="/src/Training/">
+    <Project Path="src/Training/Training.Application/Training.Application.csproj" />
+    <Project Path="src/Training/Training.Domain/Training.Domain.csproj" />
+    <Project Path="src/Training/Training.Infrastructure/Training.Infrastructure.csproj" />
+    <Project Path="src/Training/Training.Service/Training.Service.csproj" />
+  </Folder>
+  <Folder Name="/tests/Integration/">
+    <Project Path="tests/Integration/Datasets/Datasets.IntegrationTests.csproj" />
+    <Project Path="tests/Integration/Labeling/Labeling.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/Unit/">
+    <Project Path="tests/Unit/Datasets/Datasets.UnitTests.csproj" />
+    <Project Path="tests/Unit/Identity/Identity.UnitTests.csproj" />
+    <Project Path="tests/Unit/Labeling/Labeling.UnitTests.csproj" />
+    <Project Path="tests/Unit/Training/Training.UnitTests.csproj" />
+  </Folder>
+  <Folder Name="/src/Worker/">
+    <File Path="src/Worker/Dockerfile" />
+    <File Path="src/Worker/README.md" />
+  </Folder>
+</Solution>

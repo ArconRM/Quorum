@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Application: фичи (MediatR), порты. Свой домен + общий application-слой. -->
+  <ItemGroup>
+    <ProjectReference Include="../Datasets.Domain/Datasets.Domain.csproj" />
+    <ProjectReference Include="../../Shared/Quorum.Application/Quorum.Application.csproj" />
+  </ItemGroup>
+</Project>

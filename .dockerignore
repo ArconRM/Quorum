@@ -1,0 +1,8 @@
+**/bin
+**/obj
+**/.vs
+**/.idea
+.git
+tests
+**/__pycache__
+src/Worker/quorum_worker/worker_pb2*.py

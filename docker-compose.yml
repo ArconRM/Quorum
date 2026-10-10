@@ -1,0 +1,150 @@
+# Локальный запуск:      docker compose up -d --build
+# Точка входа:           http://localhost:8000          (API Gateway)
+# Swagger (все сервисы): http://localhost:8000/swagger
+# RabbitMQ UI:           http://localhost:15672         (quorum / quorum)
+# PostgreSQL:            localhost:5432                 (postgres / postgres)
+#                        базы: identity, datasets, labeling, training — у каждого сервиса своя
+
+x-env: &common-env
+  ASPNETCORE_ENVIRONMENT: Production
+  RabbitMq__Host: rabbitmq
+  RabbitMq__Username: ${RABBITMQ_USER:-quorum}
+  RabbitMq__Password: ${RABBITMQ_PASSWORD:-quorum}
+  Jwt__Key: ${JWT_KEY:-dev-only-super-secret-signing-key-change-me-0123456789}
+  Jwt__Issuer: quorum-identity
+  Jwt__Audience: quorum
+
+x-service: &service
+  restart: unless-stopped
+  depends_on:
+    postgres: { condition: service_healthy }
+    rabbitmq: { condition: service_healthy }
+
+services:
+  # ---------------- инфраструктура ----------------
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports: [ "5432:5432" ]
+    volumes: [ "pgdata:/var/lib/postgresql/data" ]
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-quorum}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-quorum}
+    ports: [ "15672:15672" ]
+    healthcheck:
+      test: [ "CMD", "rabbitmq-diagnostics", "-q", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  # GPU-воркер. Сейчас — заглушка на Python без CUDA (src/Worker); кадры читает из общего тома.
+  worker:
+    image: ${REGISTRY:-quorum}/worker:${TAG:-latest}
+    build:
+      context: .
+      dockerfile: src/Worker/Dockerfile
+    restart: unless-stopped
+    environment:
+      ARTIFACTS_DIR: /artifacts
+      STUB_FRAME_DELAY_MS: ${STUB_FRAME_DELAY_MS:-15}
+      STUB_EPOCH_DELAY_MS: ${STUB_EPOCH_DELAY_MS:-300}
+      STUB_FAIL_TRAINING: ${STUB_FAIL_TRAINING:-0}
+    volumes:
+      - frames:/data/frames:ro
+      - artifacts:/artifacts
+
+  # ---------------- микросервисы (у каждого своя БД) ----------------
+  identity:
+    <<: *service
+    image: ${REGISTRY:-quorum}/identity:${TAG:-latest}
+    build:
+      context: .
+      args: { PROJECT: src/Identity/Identity.Service/Identity.Service.csproj, APP: Identity.Service }
+    environment:
+      <<: *common-env
+      OpenApi__ServerUrl: /identity
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=identity;Username=postgres;Password=${POSTGRES_PASSWORD:-postgres}
+      Admin__Email: ${ADMIN_EMAIL:-admin@quorum.local}
+      Admin__Password: ${ADMIN_PASSWORD:-Admin123!}
+
+  datasets:
+    <<: *service
+    image: ${REGISTRY:-quorum}/datasets:${TAG:-latest}
+    build:
+      context: .
+      args: { PROJECT: src/Datasets/Datasets.Service/Datasets.Service.csproj, APP: Datasets.Service }
+    environment:
+      <<: *common-env
+      OpenApi__ServerUrl: /datasets
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=datasets;Username=postgres;Password=${POSTGRES_PASSWORD:-postgres}
+      Storage__FramesRoot: /data/frames
+      Scheduler__IntervalSeconds: ${SCHEDULER_INTERVAL_SECONDS:-60}
+    volumes: [ "frames:/data/frames" ]
+
+  labeling:
+    <<: *service
+    image: ${REGISTRY:-quorum}/labeling:${TAG:-latest}
+    build:
+      context: .
+      args: { PROJECT: src/Labeling/Labeling.Service/Labeling.Service.csproj, APP: Labeling.Service }
+    environment:
+      <<: *common-env
+      OpenApi__ServerUrl: /labeling
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=labeling;Username=postgres;Password=${POSTGRES_PASSWORD:-postgres}
+      Grpc__Datasets: http://datasets:8081
+      Grpc__Worker: http://worker:50051
+
+  training:
+    <<: *service
+    depends_on:
+      postgres: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    image: ${REGISTRY:-quorum}/training:${TAG:-latest}
+    build:
+      context: .
+      args: { PROJECT: src/Training/Training.Service/Training.Service.csproj, APP: Training.Service }
+    environment:
+      <<: *common-env
+      OpenApi__ServerUrl: /training
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=training;Username=postgres;Password=${POSTGRES_PASSWORD:-postgres}
+      ConnectionStrings__Redis: redis:6379
+      Grpc__Labeling: http://labeling:8081
+      Grpc__Worker: http://worker:50051
+      Adaptation__MinTrainingLabels: ${MIN_TRAINING_LABELS:-10}
+      Adaptation__Epochs: ${TRAINING_EPOCHS:-10}
+
+  gateway:
+    restart: unless-stopped
+    image: ${REGISTRY:-quorum}/gateway:${TAG:-latest}
+    build:
+      context: .
+      args: { PROJECT: src/Gateway/Quorum.Gateway/Quorum.Gateway.csproj, APP: Quorum.Gateway }
+    ports: [ "8000:8080" ]
+    depends_on: [ identity, datasets, labeling, training ]
+
+volumes:
+  pgdata:
+  frames:
+  artifacts:

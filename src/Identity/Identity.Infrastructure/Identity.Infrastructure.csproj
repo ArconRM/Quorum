@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Infrastructure: своя БД (Db/), репозитории, консьюмеры, gRPC-клиенты. -->
+  <ItemGroup>
+    <ProjectReference Include="../Identity.Application/Identity.Application.csproj" />
+    <ProjectReference Include="../../Shared/Quorum.Core/Quorum.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Identity.UnitTests" />
+    <InternalsVisibleTo Include="Identity.IntegrationTests" />
+  </ItemGroup>
+
+</Project>
