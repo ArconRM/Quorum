@@ -1,0 +1,30 @@
+# Настоящий GPU-воркер (WORKER_MODE=real). Сборка из корня репозитория:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml build worker
+FROM pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime
+WORKDIR /app
+ENV PYTHONUNBUFFERED=1 \
+    WORKER_MODE=real \
+    HF_HOME=/cache/huggingface \
+    YOLO_CONFIG_DIR=/cache/ultralytics
+
+# libgl/libglib нужны OpenCV внутри ultralytics даже в headless-сборке; git — для пакета CLIP ниже.
+RUN apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 git && rm -rf /var/lib/apt/lists/*
+
+COPY src/Worker/requirements.txt src/Worker/requirements-gpu.txt ./
+RUN pip install --no-cache-dir -r requirements-gpu.txt
+# YOLO-World кодирует текстовый запрос через CLIP. Без пакета Ultralytics пытается доставить его
+# через pip прямо во время прогона учителя — в рантайм-образе это падает.
+RUN pip install --no-cache-dir "git+https://github.com/ultralytics/CLIP.git"
+
+COPY src/Worker/quorum_worker ./quorum_worker
+COPY src/Worker/experiments ./experiments
+COPY src/Worker/tests ./tests
+COPY src/Shared/Quorum.Application/Protos/worker.proto ./protos/worker.proto
+RUN python -m grpc_tools.protoc -I protos --python_out=quorum_worker --grpc_python_out=quorum_worker protos/worker.proto \
+ && sed -i 's/^import worker_pb2/from . import worker_pb2/' quorum_worker/worker_pb2_grpc.py
+
+# Веса YOLO-World и yolov8n скачиваются Ultralytics в рабочий каталог — держим его на томе кэша.
+WORKDIR /cache/ultralytics/weights
+ENV PYTHONPATH=/app
+EXPOSE 50051
+CMD ["python", "-m", "quorum_worker.server"]

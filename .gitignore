@@ -9,3 +9,11 @@ TestResults/
 __pycache__/
 *.pyc
 src/Worker/quorum_worker/worker_pb2*.py
+
+# GPU-профиль: веса, данные и результаты не в git
+models/
+models-gguf/
+datasets/
+runs/
+src/Worker/*.pt
+src/Worker/runs/

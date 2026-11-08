@@ -1,11 +1,15 @@
 """
 gRPC-сервер InferenceWorker (контракт: src/Shared/Quorum.Application/Protos/worker.proto).
 
-Сейчас это ЗАГЛУШКА: работа имитируется задержками и детерминированными данными (simulation.py).
-Настоящий инференс (GroundingDINO / YOLO-World / OWLv2, VLM через llama.cpp, обучение YOLO/CRNN)
-подменит только тела методов — контракт и вызывающий .NET-код менять не придётся.
+Два режима (WORKER_MODE):
+  stub (по умолчанию) — заглушка: задержки и детерминированные данные (simulation.py), без GPU.
+                        Нужна демо-скрипту и проверке саги.
+  real                — настоящий инференс и обучение (real.py): GroundingDINO / YOLO-World / OWLv2,
+                        VLM через OpenAI-совместимый сервер, обучение YOLO и CRNN.
+Контракт у обоих один, .NET-код разницы не видит.
 
 Переменные окружения:
+  WORKER_MODE          stub | real
   WORKER_PORT          порт gRPC (50051)
   ARTIFACTS_DIR        куда складывать «обученные модели» (/artifacts)
   STUB_FRAME_DELAY_MS  задержка на кадр при инференсе (15)
@@ -39,7 +43,7 @@ def _read_artifact(path: str) -> dict | None:
         return None
 
 
-class InferenceWorker(pb_grpc.InferenceWorkerServicer):
+class StubWorker(pb_grpc.InferenceWorkerServicer):
     def RunTeacher(self, request, context):
         log.info("RunTeacher %s (%s, %s): %d frames", request.teacher, request.kind, request.task, len(request.frames))
         for frame in request.frames:
@@ -112,10 +116,18 @@ def serve() -> None:
     port = os.getenv("WORKER_PORT", "50051")
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=8),
                          options=[("grpc.max_receive_message_length", 64 * 1024 * 1024)])
-    pb_grpc.add_InferenceWorkerServicer_to_server(InferenceWorker(), server)
+    mode = os.getenv("WORKER_MODE", "stub").lower()
+    if mode == "real":
+        from .real import RealWorker
+        servicer = RealWorker()
+    elif mode == "stub":
+        servicer = StubWorker()
+    else:
+        raise SystemExit(f"Unknown WORKER_MODE={mode!r}: expected stub or real")
+    pb_grpc.add_InferenceWorkerServicer_to_server(servicer, server)
     server.add_insecure_port(f"[::]:{port}")
     server.start()
-    log.info("Inference worker (stub) listening on :%s", port)
+    log.info("Inference worker (%s) listening on :%s", mode, port)
     server.wait_for_termination()
 
 

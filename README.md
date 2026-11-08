@@ -226,7 +226,7 @@ src/
     Quorum.Application/   IUnitOfWork, IIntegrationEventPublisher, исключения, ValidationBehavior, Contracts/, Protos/
     Quorum.Core/          JWT, Swagger/OpenAPI, ProblemDetails, Postgres + миграции, MassTransit + outbox/inbox
   Gateway/Quorum.Gateway/ YARP + общий Swagger UI
-  Worker/                 Python gRPC-воркер (заглушка)
+  Worker/                 Python gRPC-воркер: заглушка (stub) и настоящий режим (real), эксперименты
 tests/
   Unit/         Identity/ Datasets/ Labeling/ Training/   — внутри Domain/, Features/
   Integration/  Datasets/ (API) · Labeling/ (Db)            — Testcontainers
@@ -282,6 +282,17 @@ DEMO_FAILURE=1 ./scripts/demo.sh  # + сценарий с компенсацие
 **Swagger.** Кнопка **Authorize** принимает JWT из `POST /identity/auth/login`.
 
 Маршруты gateway: `/{identity|datasets|labeling|training}/...` → сервис (префикс срезается).
+
+### Настоящий воркер на GPU
+
+По умолчанию поднимается заглушка воркера (без видеокарты). Настоящие учителя и обучение — отдельным профилем:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+```
+
+Нужны NVIDIA Container Toolkit, GGUF-модели в `./models-gguf` (список — `llama-swap.yaml`), свои веса YOLO — в `./models`.
+Подробности, имена учителей и офлайн-эксперименты — `src/Worker/README.md`.
 
 ### Основные эндпоинты
 

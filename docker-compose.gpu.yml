@@ -1,0 +1,59 @@
+# Настоящий воркер на GPU + сервер мультимодальных моделей.
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+#
+# Без этого файла поднимается заглушка (как раньше): демо и тесты саги работают без видеокарты.
+#
+# Fedora: SELinux в режиме enforcing не пускает контейнер в bind-монтирования без метки,
+# поэтому у каталогов хоста стоит суффикс :z. Симптом без него — Permission denied на существующих файлах.
+
+services:
+  worker:
+    build:
+      context: .
+      dockerfile: src/Worker/Dockerfile.gpu
+    image: ${REGISTRY:-quorum}/worker-gpu:${TAG:-latest}
+    environment:
+      WORKER_MODE: real
+      ARTIFACTS_DIR: /artifacts
+      FRAMES_ROOT: /data/frames
+      MODELS_DIR: /models
+      VLM_BASE_URL: http://llm:8080/v1
+      VLM_PARALLEL: ${VLM_PARALLEL:-2}
+      # Пороги уверенности учителей — параметр эксперимента, их стоит подобрать на своих данных.
+      GDINO_THRESHOLD: ${GDINO_THRESHOLD:-0.3}
+      OWLV2_THRESHOLD: ${OWLV2_THRESHOLD:-0.15}
+      YOLO_WORLD_THRESHOLD: ${YOLO_WORLD_THRESHOLD:-0.1}
+      YOLO_IMGSZ: ${YOLO_IMGSZ:-640}
+      YOLO_BATCH: ${YOLO_BATCH:-16}
+      # Предобученный CRNN для первого цикла OCR (см. src/Worker/README.md, «Предобучение CRNN»)
+      CRNN_PRETRAINED: ${CRNN_PRETRAINED:-/models/crnn-ru.pt}
+    shm_size: 8gb  # DataLoader Ultralytics с несколькими воркерами иначе падает на /dev/shm
+    gpus: all
+    volumes:
+      - frames:/data/frames:ro
+      - artifacts:/artifacts
+      - worker_cache:/cache                 # веса HuggingFace и Ultralytics — качаются один раз
+      - ./models:/models:ro,z               # свои веса: models/<имя учителя>.pt (YOLOv8l из курсовой)
+      - ./datasets:/datasets:ro,z           # наборы из курсовых — для experiments
+      - ./runs:/app/runs:z                  # результаты экспериментов
+    depends_on: [ llm ]
+
+  # Заглушке хватало 10 эпох «для вида»; настоящему студенту нужно больше.
+  training:
+    environment:
+      Adaptation__Epochs: ${TRAINING_EPOCHS:-40}
+
+  # OpenAI-совместимый сервер VLM. llama-swap держит в памяти одну модель и подменяет её по полю "model"
+  # в запросе — то, что нужно для 16 ГБ: учителя Labeling и так идут по очереди.
+  # Модели (GGUF + mmproj) кладутся в ./models-gguf, список — в llama-swap.yaml.
+  llm:
+    image: ghcr.io/mostlygeek/llama-swap:cuda
+    restart: unless-stopped
+    gpus: all
+    ports: [ "8080:8080" ]
+    volumes:
+      - ./models-gguf:/models:ro,z
+      - ./llama-swap.yaml:/app/config.yaml:ro,z
+
+volumes:
+  worker_cache:

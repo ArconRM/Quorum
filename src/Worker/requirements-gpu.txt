@@ -1,0 +1,10 @@
+# Настоящий воркер (WORKER_MODE=real). torch уже есть в базовом образе pytorch/pytorch.
+-r requirements.txt
+transformers>=4.51,<6
+accelerate>=1.0
+ultralytics>=8.3,<9
+opencv-python-headless>=4.9
+pillow>=10
+requests>=2.31
+matplotlib>=3.8
+pytest>=8

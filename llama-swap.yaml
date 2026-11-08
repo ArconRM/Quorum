@@ -1,0 +1,36 @@
+# Модели-учителя для распознавания текста (сервис llm в docker-compose.gpu.yml).
+#
+# Имя модели здесь = имя учителя в Labeling (POST /labeling/teachers, kind=Vlm): воркер передаёт его
+# в поле "model", llama-swap выгружает текущую модель и поднимает нужную. Суффикс «-1234» в имени
+# учителя воркер отбрасывает. Другое сопоставление — через TEACHER_MAP_FILE (JSON).
+#
+# Файлы: ./models-gguf/<модель>.gguf и mmproj (визуальный энкодер — без него модель не видит картинку).
+# Имена файлов ниже — пример; поправь под то, что скачал. Q4_K_M каждой модели влезает в 16 ГБ.
+#
+# СВЕРИТЬ ПРИ ПЕРВОМ ЗАПУСКЕ: путь к llama-server внутри образа llama-swap:cuda (ниже /app/llama-server)
+# и путь к конфигу (/app/config.yaml в compose). Если сервис не стартует — смотри README llama-swap.
+
+# Простаивающая модель выгружается через 2 минуты: иначе она держит видеопамять, пока воркер обучает студента.
+globalTTL: 120
+
+macros:
+  server: /app/llama-server --port ${PORT} --n-gpu-layers 99 --ctx-size 4096 --parallel 2 --temp 0
+
+models:
+  qwen3-vl-8b:
+    cmd: ${server} -m /models/Qwen3-VL-8B-Instruct-Q4_K_M.gguf --mmproj /models/Qwen3-VL-8B-mmproj-F16.gguf
+
+  qwen3.5-9b:
+    cmd: ${server} -m /models/Qwen3.5-9B-Q4_K_M.gguf --mmproj /models/Qwen3.5-9B-mmproj-F16.gguf
+
+  qwen3-vl-4b:
+    cmd: ${server} -m /models/Qwen3-VL-4B-Instruct-Q4_K_M.gguf --mmproj /models/Qwen3-VL-4B-mmproj-F16.gguf
+
+  gemma-3-4b:
+    cmd: ${server} -m /models/gemma-3-4b-it-Q4_K_M.gguf --mmproj /models/gemma-3-4b-mmproj-F16.gguf
+
+  gemma-4-e4b:
+    cmd: ${server} -m /models/gemma-4-E4B-it-Q4_K_M.gguf --mmproj /models/gemma-4-E4B-mmproj-F16.gguf
+
+  nanonets-ocr2-3b:
+    cmd: ${server} -m /models/Nanonets-OCR2-3B-Q4_K_M.gguf --mmproj /models/Nanonets-OCR2-3B-mmproj-F16.gguf
