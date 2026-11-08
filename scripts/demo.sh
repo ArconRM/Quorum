@@ -26,9 +26,10 @@ upload_frames() { # camera, count, token
 
 # Ждём конца цикла; пока идёт разметка — разметчик разбирает спорные кадры (всё подтверждает).
 run_cycle() { # cycleId
-  local status reviewed=0
+  local status last="" reviewed=0
   for _ in $(seq 1 300); do
     status=$(get "/training/cycles/$1" "$ADMIN" | jq -r .status)
+    [[ "$status" != "$last" ]] && { echo "   … $status"; last=$status; }
     case "$status" in
       Completed|Failed|Skipped) break ;;
       Labeling)
@@ -40,6 +41,7 @@ run_cycle() { # cycleId
     esac
     sleep 1
   done
+  [[ "$status" =~ ^(Completed|Failed|Skipped)$ ]] || echo "   ! цикл не завершился за 300 с (статус: $status) — смотри: docker compose logs training"
   [[ $reviewed -gt 0 ]] && echo "   разметчик проверил кадров: $reviewed"
   get "/training/cycles/$1" "$ADMIN" | jq -c '{status, outcome, trainFrames, holdoutFrames, acceptedLabels, failureReason, evaluation}'
 }

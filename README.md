@@ -9,13 +9,6 @@
 спорные кадры (по выбранной стратегии) проверяет разметчик → на псевдоразметке дообучается лёгкий студент →
 он публикуется на камеру, только если на новых кадрах лучше текущей модели. И так периодически.
 
-> ⚠️ Код написан без возможности скомпилировать его в среде генерации (не было .NET SDK и NuGet).
-> Синтаксис всех `.cs` проверен парсером, `.proto` — компилятором protoc, Python-воркер запускался
-> и отвечал по gRPC. Мелкие ошибки компиляции возможны — первым делом `dotnet build`.
-
-> GPU-воркер пока **заглушка** (`src/Worker`): имитирует учителей, обучение и оценку правдоподобными
-> детерминированными данными. Контракт gRPC финальный — настоящий инференс подменит только Python-код.
-
 ---
 
 ## 1. Покрытие требований
@@ -34,8 +27,6 @@
 | 10 | gRPC | Labeling → Datasets, Training → Labeling, Labeling/Training → воркер (стримы) (§5) |
 | 11 | Единый сервис авторизации, JWT | Identity выпускает JWT, остальные проверяют подпись локально (§7) |
 | 12 | Unit + интеграционные тесты | `tests/Unit/<Сервис>`, `tests/Integration/<Сервис>` (Testcontainers) (§11) |
-| 13 | GitLab пайплайн | `.gitlab-ci.yml`: unit + проверка воркера → integration → build → deploy |
-| 14 | Сборка и деплой на сервер | Образы в GitLab Registry, деплой по SSH + `docker compose` |
 
 ---
 
@@ -286,15 +277,6 @@ DEMO_FAILURE=1 ./scripts/demo.sh  # + сценарий с компенсацие
 | `labeling` | `teachers`, `runs`, `run_teachers`, `predictions`, `labels`, `review_tasks` |
 | `training` | `cycles`, `training_jobs`, `model_versions`, `evaluations` |
 
-**Миграции** лежат в `<Сервис>.Infrastructure/Db/Migrations`:
-
-```bash
-./scripts/add-migration.sh Initial               # для всех сервисов
-./scripts/add-migration.sh AddFrameTags Datasets # для одного
-```
-
-Пока миграций нет, схема создаётся по модели (`EnsureCreated`), поэтому проект запускается и без них.
-
 **Кадры** хранятся в docker-томе `frames` (`Storage:FramesRoot`); воркер монтирует тот же том только на чтение.
 
 **Swagger.** Кнопка **Authorize** принимает JWT из `POST /identity/auth/login`.
@@ -344,23 +326,3 @@ dotnet test Quorum.slnx --filter "Category=Integration"    # нужен Docker
 - `Integration/Datasets` — настоящий Datasets.Service поверх Postgres + RabbitMQ: 401/403 по ролям, валидация, загрузка кадров и скачивание, неактивная камера, OpenAPI.
 - `Integration/Labeling` — маппинг на настоящем Postgres: боксы в jsonb, owned-стратегия, учителя прогона, уникальность «учитель × кадр», конфликт конкурентных проверок (`xmin`).
 
-## 12. CI/CD (GitLab) и деплой
-
-`.gitlab-ci.yml`:
-1. **test** — unit-тесты (`dotnet/sdk:10.0`) и проверка воркера (генерация gRPC-кода + импорт).
-2. **integration** — интеграционные тесты в `docker:dind`. **Раннеру нужен `privileged = true`.**
-3. **build** (ветка по умолчанию) — `docker compose build && push` в GitLab Container Registry (все сервисы, gateway и воркер).
-4. **deploy** (вручную) — по SSH копирует `docker-compose.yml` на сервер и выполняет `docker compose pull && up -d`.
-
-Переменные: `SSH_PRIVATE_KEY`, `DEPLOY_HOST`, `DEPLOY_USER`; секреты продового окружения — в `~/quorum/.env` на сервере.
-
-## 13. Упрощения и что дальше
-
-- **Воркер — заглушка.** Следующий шаг (уже для диплома): open-vocab детекторы и VLM через llama.cpp в `RunTeacher`, Ultralytics/CRNN в `TrainStudent`, настоящие метрики в `Evaluate`; базовый образ с CUDA и `runtime: nvidia`.
-- Консенсус «простой»: жадная кластеризация вместо полного WBF, согласие без Fleiss' kappa. Алгоритмы — чистые функции в `Labeling.Domain/Consensus`, меняются без касания остального.
-- Переигрывание агрегации по кэшу предсказаний с другими порогами — данные для этого уже хранятся, эндпоинта пока нет.
-- Миграции нужно сгенерировать один раз (`./scripts/add-migration.sh Initial`).
-- Команды саги отправляются через `Publish` (у каждой ровно один потребитель); строже — `Send` в конкретную очередь.
-- У саги нет таймаутов (например, «разметчики не разобрали проверку за сутки»): нужен `Schedule` + delayed-exchange.
-- Кадры — на локальном томе; для нескольких машин — S3/MinIO за тем же портом `IFrameStorage`.
-- JWT на симметричном ключе; лучше RSA + JWKS, refresh-токены.

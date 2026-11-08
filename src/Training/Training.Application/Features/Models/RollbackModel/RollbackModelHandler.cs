@@ -19,6 +19,14 @@ public sealed class RollbackModelHandler(
         var target = await versions.GetAsync(cmd.VersionId, ct) ?? throw new NotFoundException($"Version {cmd.VersionId} not found");
         var current = await versions.GetPublishedAsync(target.CameraId, ct);
 
+        if (target.Status != ModelVersionStatus.Archived)
+            throw new Quorum.Domain.DomainException($"Only archived versions can be restored, this one is {target.Status}");
+        if (current is not null)
+        {
+            // Сначала архив текущей, потом публикация целевой: индекс «одна опубликованная» проверяется построчно.
+            ModelPublication.Retire(current);
+            await uow.CommitAsync(ct);
+        }
         ModelPublication.Restore(target, current);
         await events.PublishAsync(new ModelPublished(target.CameraId, target.Id, target.Number, target.MetricName,
             target.HoldoutMetric ?? 0), ct);

@@ -14,10 +14,17 @@ public static class ModelPublication
         {
             if (current.Id == next.Id) throw new DomainException("Version is already published");
             if (current.CameraId != next.CameraId) throw new DomainException("Versions belong to different cameras");
-            current.Archive();
+            if (current.Status == ModelVersionStatus.Published) current.Archive();
         }
         next.Publish();
     }
+
+    /// <summary>
+    /// Первый шаг публикации: старая версия уходит в архив. Приложение фиксирует его отдельным SaveChanges до
+    /// <see cref="Publish"/>: Postgres проверяет уникальный индекс «одна опубликованная на камеру» построчно,
+    /// а порядок UPDATE в EF не определён — иначе новая «Published» упирается в ещё не архивированную старую.
+    /// </summary>
+    public static void Retire(ModelVersion current) => current.Archive();
 
     /// <summary>Откат: вернуть на камеру ранее опубликованную (архивную) версию.</summary>
     public static void Restore(ModelVersion archived, ModelVersion? current)

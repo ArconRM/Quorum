@@ -49,6 +49,12 @@ public sealed class EvaluateCandidateHandler(
             promoted = evaluation.Decision == EvaluationDecision.Promote;
             if (promoted)
             {
+                if (published is not null)
+                {
+                    // Сначала архив, потом публикация — двумя SaveChanges (в одной транзакции outbox-консьюмера).
+                    ModelPublication.Retire(published);
+                    await uow.CommitAsync(ct);
+                }
                 ModelPublication.Publish(candidate, published);
                 await events.PublishAsync(new ModelPublished(candidate.CameraId, candidate.Id, candidate.Number,
                     candidate.MetricName, scores.Candidate), ct);

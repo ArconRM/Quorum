@@ -21,7 +21,7 @@ x-service: &service
     rabbitmq: { condition: service_healthy }
 
 services:
-  # ---------------- инфраструктура ----------------
+  # инфраструктура
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
@@ -39,6 +39,8 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    ports:
+      - "6379:6379"
     healthcheck:
       test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
@@ -58,7 +60,7 @@ services:
       timeout: 5s
       retries: 20
 
-  # GPU-воркер. Сейчас — заглушка на Python без CUDA (src/Worker); кадры читает из общего тома.
+  # GPU-воркер. Сейчас — заглушка
   worker:
     image: ${REGISTRY:-quorum}/worker:${TAG:-latest}
     build:
@@ -74,7 +76,7 @@ services:
       - frames:/data/frames:ro
       - artifacts:/artifacts
 
-  # ---------------- микросервисы (у каждого своя БД) ----------------
+  # микросервисы (у каждого свой пг)
   identity:
     <<: *service
     image: ${REGISTRY:-quorum}/identity:${TAG:-latest}
