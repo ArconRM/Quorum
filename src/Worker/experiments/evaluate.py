@@ -112,6 +112,17 @@ def boxes_of(row: dict | None) -> list[Box]:
 
 # ---------------- основной расчёт ----------------
 
+def apply_max_area(preds: dict[str, dict[str, dict]], max_area: dict[str, float]) -> None:
+    """Отбросить боксы больше заданной доли кадра. GroundingDINO по запросу «license plate»
+    уверенно обводит всю машину целиком, а номер — нет; номер же никогда не занимает полкадра."""
+    for teacher, limit in max_area.items():
+        if teacher not in preds:
+            print(f"! --max-area: учителя {teacher!r} нет среди {sorted(preds)}")
+            continue
+        for row in preds[teacher].values():
+            row["boxes"] = [b for b in row["boxes"] if b[2] * b[3] <= limit]
+
+
 def apply_min_scores(preds: dict[str, dict[str, dict]], min_scores: dict[str, float]) -> None:
     for teacher, threshold in min_scores.items():
         if teacher not in preds:
@@ -122,7 +133,7 @@ def apply_min_scores(preds: dict[str, dict[str, dict]], min_scores: dict[str, fl
 
 
 def evaluate(out: Path, weights: dict[str, float], min_scores: dict[str, float] | None = None,
-             only: list[str] | None = None) -> dict:
+             only: list[str] | None = None, max_area: dict[str, float] | None = None) -> dict:
     items = load_manifest(out)
     preds = load_predictions(out)
     if only:
@@ -131,6 +142,7 @@ def evaluate(out: Path, weights: dict[str, float], min_scores: dict[str, float] 
             raise SystemExit(f"--teachers: нет предсказаний для {sorted(unknown)}; есть {sorted(preds)}")
         preds = {t: preds[t] for t in only}
     apply_min_scores(preds, min_scores or {})
+    apply_max_area(preds, max_area or {})
     if not preds:
         raise SystemExit(f"No predictions in {out / 'predictions'}: run experiments.run first")
     task = "detection" if any(i.boxes for i in items) or not any(i.text for i in items) else "ocr"
@@ -159,7 +171,7 @@ def evaluate(out: Path, weights: dict[str, float], min_scores: dict[str, float] 
     kappa = fleiss_kappa([[normalize_text(v.text) or "<none>" for v in f["votes"]] for f in frames]) if task == "ocr" else None
     return {"task": task, "teachers": teacher_rows, "sweep": sweep, "domains": domains, "frames": frames,
             "kappa": kappa, "n": len(items), "weights": {t: weights.get(t, 1.0) for t in teachers},
-            "min_scores": min_scores or {}, "iou": IOU}
+            "min_scores": min_scores or {}, "max_area": max_area or {}, "iou": IOU}
 
 
 def _teacher_metrics(task: str, name: str, items: list[Item], rows: dict) -> dict:
@@ -339,10 +351,10 @@ def summary(result: dict, report: Path) -> None:
         lines += ["| " + " | ".join(str(r.get(k, "")) for k in keys) + " |" for r in rows]
         return "\n".join(lines)
 
-    best = max((r for r in result["sweep"] if r["auto_precision"] != ""), key=lambda r: r["hybrid_label_accuracy"] - r["hybrid_human_fraction"])
     text = [f"# Разметка ансамблем: {result['task']}, {result['n']} кадров", "",
             f"Веса учителей: {result['weights']}", "",
             f"Пороги уверенности при оценке: {result['min_scores'] or 'как при прогоне'}", "",
+            f"Максимальная площадь бокса (доля кадра): {result['max_area'] or 'без ограничения'}", "",
             f"Порог IoU для совпадения с эталоном: {result['iou']}", "",
             "## Учителя и консенсус", "", table(result["teachers"]), ""]
     if result["kappa"] is not None:
@@ -350,10 +362,22 @@ def summary(result: dict, report: Path) -> None:
     text += ["## Стратегии валидации по порогу согласия", "",
              "Человек симулируется эталоном. Manual: 100% кадров человеку, точность 1.0.", "",
              table(result["sweep"]), "",
-             f"Лучший баланс Hybrid по (точность − доля человека): порог {best['threshold']}, "
-             f"человеку {best['hybrid_human_fraction']:.0%} кадров, точность меток {best['hybrid_label_accuracy']:.1%}.", "",
+             *_targets(result["sweep"]), "",
              "## По доменам", "", table(result["domains"]), ""]
     (report / "summary.md").write_text("\n".join(text), encoding="utf-8")
+
+
+def _targets(sweep: list[dict]) -> list[str]:
+    """Сколько ручного труда нужно Hybrid, чтобы метки достигли заданной точности."""
+    lines = ["Минимальная доля кадров человеку в режиме Hybrid для заданной точности меток:", ""]
+    for target in (0.9, 0.95, 0.98, 0.99):
+        ok = [r for r in sweep if r["hybrid_label_accuracy"] >= target]
+        if ok:
+            r = min(ok, key=lambda r: (r["hybrid_human_fraction"], -r["threshold"]))
+            lines.append(f"- точность ≥ {target:.0%}: человеку {r['hybrid_human_fraction']:.1%} кадров (порог согласия {r['threshold']})")
+        else:
+            lines.append(f"- точность ≥ {target:.0%}: недостижима")
+    return lines
 
 
 def main() -> None:
@@ -361,6 +385,7 @@ def main() -> None:
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--weights", default="", help="имя=вес через запятую; по умолчанию все 1")
     ap.add_argument("--min-score", default="", help="имя=порог через запятую: боксы ниже порога отбрасываются")
+    ap.add_argument("--max-area", default="", help="имя=доля через запятую: боксы больше этой доли кадра отбрасываются")
     ap.add_argument("--teachers", default="", help="только эти учителя, через запятую (абляция: вклад каждого)")
     ap.add_argument("--iou", type=float, default=0.5, help="порог IoU совпадения с эталоном (0.3 — проверить, не в сдвиге ли рамок дело)")
     ap.add_argument("--report", default="report", help="имя каталога отчёта внутри --out (для сравнения настроек)")
@@ -371,7 +396,7 @@ def main() -> None:
     IOU = args.iou
 
     only = [t.strip() for t in args.teachers.split(",") if t.strip()]
-    result = evaluate(args.out, parse(args.weights), parse(args.min_score), only)
+    result = evaluate(args.out, parse(args.weights), parse(args.min_score), only, parse(args.max_area))
     report = args.out / args.report
     report.mkdir(exist_ok=True)
     write_csv(report / "teachers.csv", result["teachers"])

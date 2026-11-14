@@ -22,6 +22,19 @@ def _threshold(env: str, default: float) -> float:
     return float(os.getenv(env, os.getenv("DETECTOR_SCORE_THRESHOLD", default)))
 
 
+def _max_area(env: str) -> float:
+    """
+    Верхняя граница площади бокса (доля кадра), по умолчанию без ограничения.
+    Априорное знание о классе: номер никогда не занимает полкадра, а GroundingDINO по запросу
+    «license plate» уверенно обводит всю машину. Для номеров разумно 0.1 (см. src/Worker/README.md).
+    """
+    return float(os.getenv(env, os.getenv("DETECTOR_MAX_BOX_AREA", "1.0")))
+
+
+def _limit(boxes: list[Box], max_area: float) -> list[Box]:
+    return boxes if max_area >= 1.0 else [b for b in boxes if b.area <= max_area]
+
+
 def _prompt_classes(prompt: str) -> list[str]:
     classes = [c.strip() for c in (prompt or "").split(",") if c.strip()]
     return classes or ["object"]
@@ -64,7 +77,7 @@ class _HfDetector(Teacher):
                 yield FramePrediction(frame_id, error=error)
                 continue
             with torch.inference_mode():
-                boxes = self._detect(processor, model, image, prompt)
+                boxes = _limit(self._detect(processor, model, image, prompt), self.max_area)
             yield FramePrediction(frame_id, boxes, confidence=confidence_of(boxes))
 
     def load(self):
@@ -79,6 +92,7 @@ class GroundingDinoTeacher(_HfDetector):
         super().__init__(name)
         self.model_id = f"IDEA-Research/grounding-dino-{'tiny' if tiny else 'base'}"
         self.threshold = _threshold("GDINO_THRESHOLD", 0.3)
+        self.max_area = _max_area("GDINO_MAX_BOX_AREA")
 
     def load(self):
         from transformers import AutoModelForZeroShotObjectDetection
@@ -107,6 +121,7 @@ class Owlv2Teacher(_HfDetector):
         self.model_id = "google/owlv2-large-patch14-ensemble" if large else "google/owlv2-base-patch16-ensemble"
         # У OWLv2 уверенности заметно ниже, чем у GroundingDINO, — свой порог.
         self.threshold = _threshold("OWLV2_THRESHOLD", 0.15)
+        self.max_area = _max_area("OWLV2_MAX_BOX_AREA")
 
     def load(self):
         from transformers import Owlv2ForObjectDetection
@@ -128,6 +143,7 @@ class Owlv2Teacher(_HfDetector):
 class _UltralyticsTeacher(Teacher):
     batch = int(os.getenv("YOLO_TEACHER_BATCH", "16"))
     threshold = 0.25
+    max_area = 1.0
 
     @property
     def model_key(self) -> str:
@@ -168,8 +184,8 @@ class _UltralyticsTeacher(Teacher):
                     yield FramePrediction(frame_id, error=str(r))
                     continue
                 h, w = r.orig_shape
-                boxes = [b for b in (box_from_xyxy(*xyxy, w, h, s) for xyxy, s in
-                                     zip(r.boxes.xyxy.tolist(), r.boxes.conf.tolist())) if b]
+                boxes = _limit([b for b in (box_from_xyxy(*xyxy, w, h, s) for xyxy, s in
+                                            zip(r.boxes.xyxy.tolist(), r.boxes.conf.tolist())) if b], self.max_area)
                 yield FramePrediction(frame_id, boxes, confidence=confidence_of(boxes))
 
 
@@ -178,6 +194,7 @@ class YoloWorldTeacher(_UltralyticsTeacher):
         super().__init__(name)
         self.weights = os.getenv(f"YOLO_WORLD_{size.upper()}_WEIGHTS", f"yolov8{size}-worldv2.pt")
         self.threshold = _threshold("YOLO_WORLD_THRESHOLD", 0.1)
+        self.max_area = _max_area("YOLO_WORLD_MAX_BOX_AREA")
         self._classes: list[str] | None = None
 
     def _model(self, prompt: str):

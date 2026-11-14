@@ -52,6 +52,7 @@ tests/               pytest: консенсус сверен с C#-тестам�
 | `TEACHER_MAP_FILE` | — | JSON `{"имя учителя": "id модели"}`, если имена не совпадают |
 | `GDINO_THRESHOLD`, `OWLV2_THRESHOLD`, `YOLO_WORLD_THRESHOLD`, `YOLO_THRESHOLD` | 0.3 / 0.15 / 0.1 / 0.25 | порог уверенности учителя — **параметр эксперимента** |
 | `CRNN_PRETRAINED` | — | стартовые веса CRNN, если у камеры ещё нет опубликованной модели |
+| `GDINO_MAX_BOX_AREA`, `OWLV2_MAX_BOX_AREA`, `YOLO_WORLD_MAX_BOX_AREA`, `DETECTOR_MAX_BOX_AREA` | 1.0 | боксы больше этой доли кадра отбрасываются; для номеров GroundingDINO — 0.1 |
 | `OCR_REQUIRE_DIGITS` | `3` | ответ VLM без стольких цифр считается «не читается» |
 | `YOLO_IMGSZ`, `YOLO_BATCH`, `CRNN_BATCH`, `CRNN_LR` | 640, 16, 64, 1e-3 | обучение студентов |
 
@@ -71,6 +72,10 @@ python -m experiments.run --task detection --data /datasets/detection --format c
 python -m experiments.evaluate --out runs/detect_v1
 python -m experiments.evaluate --out runs/detect_v1 --weights grounding-dino=1.5,owlv2=0.7
 ```
+
+Пороги и фильтры подбираются при оценке, без повторного прогона: `--min-score учитель=порог`,
+`--max-area учитель=доля`, `--teachers a,b` (абляция), `--iou 0.3`, `--report имя` (отдельная папка отчёта).
+Посмотреть боксы глазами: `python -m experiments.show --out runs/<имя> --errors <учитель>`.
 
 Отчёт — `runs/<имя>/report/`: `summary.md`, `teachers.csv`, `strategies.csv`, `domains.csv`, `tradeoff.png`, `agreement.png`.
 

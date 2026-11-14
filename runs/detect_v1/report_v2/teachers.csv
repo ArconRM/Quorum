@@ -1,0 +1,4 @@
+teacher,precision,recall,f1,ap50,frame_accuracy,boxes_per_frame,errors,missing
+grounding-dino,0.7266,0.965,0.829,0.9424,0.76,1.39,0,0
+owlv2,0.824,0.9841,0.897,0.954,0.7967,1.25,0,0
+CONSENSUS,0.9119,0.9554,0.9331,,0.87,,,

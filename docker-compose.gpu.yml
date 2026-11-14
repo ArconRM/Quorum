@@ -25,6 +25,11 @@ services:
       GDINO_THRESHOLD: ${GDINO_THRESHOLD:-0.3}
       OWLV2_THRESHOLD: ${OWLV2_THRESHOLD:-0.15}
       YOLO_WORLD_THRESHOLD: ${YOLO_WORLD_THRESHOLD:-0.1}
+      # Максимальная площадь бокса, доля кадра (1.0 — без ограничения). Для номеров GroundingDINO
+      # нужно 0.1: иначе он обводит всю машину. В экспериментах удобнее фильтровать при оценке (--max-area).
+      GDINO_MAX_BOX_AREA: ${GDINO_MAX_BOX_AREA:-1.0}
+      OWLV2_MAX_BOX_AREA: ${OWLV2_MAX_BOX_AREA:-1.0}
+      YOLO_WORLD_MAX_BOX_AREA: ${YOLO_WORLD_MAX_BOX_AREA:-1.0}
       YOLO_IMGSZ: ${YOLO_IMGSZ:-640}
       YOLO_BATCH: ${YOLO_BATCH:-16}
       # Предобученный CRNN для первого цикла OCR (см. src/Worker/README.md, «Предобучение CRNN»)

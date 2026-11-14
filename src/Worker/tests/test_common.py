@@ -87,3 +87,15 @@ def test_dataset_loader_skips_macos_junk_and_reads_roboflow(tmp_path):
     Image.new("RGB", (40, 10)).save(ocr / "A123BC77___40___10.png")
     (ocr / "._A123BC77___40___10.png").write_bytes(b"\x00\x05\x16\x07")
     assert [i.text for i in load_ocr(ocr)] == ["A123BC77"]
+
+
+def test_max_box_area_drops_whole_car_boxes(monkeypatch):
+    from quorum_worker.common import Box
+    from quorum_worker.teachers.detectors import _limit, _max_area
+
+    car, plate = Box(0.1, 0.1, 0.8, 0.7, 0.6), Box(0.4, 0.7, 0.15, 0.05, 0.35)
+    assert _limit([car, plate], 1.0) == [car, plate]
+    assert _limit([car, plate], 0.1) == [plate]
+    monkeypatch.setenv("DETECTOR_MAX_BOX_AREA", "0.2")
+    monkeypatch.setenv("GDINO_MAX_BOX_AREA", "0.1")
+    assert _max_area("GDINO_MAX_BOX_AREA") == 0.1 and _max_area("OWLV2_MAX_BOX_AREA") == 0.2
