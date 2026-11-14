@@ -12,11 +12,13 @@ services:
       context: .
       dockerfile: src/Worker/Dockerfile.gpu
     image: ${REGISTRY:-quorum}/worker-gpu:${TAG:-latest}
+    pull_policy: build   # образ собирается локально, в реестре его нет — не пытаться скачать
     environment:
       WORKER_MODE: real
       ARTIFACTS_DIR: /artifacts
       FRAMES_ROOT: /data/frames
       MODELS_DIR: /models
+      EXPERIMENTS_ROOT: /app   # --out runs/... → /app/runs/... → ./runs на хосте
       VLM_BASE_URL: http://llm:8080/v1
       VLM_PARALLEL: ${VLM_PARALLEL:-2}
       # Пороги уверенности учителей — параметр эксперимента, их стоит подобрать на своих данных.

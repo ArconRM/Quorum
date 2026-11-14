@@ -63,3 +63,27 @@ def test_vlm_model_name_drops_demo_suffix(tmp_path, monkeypatch):
     mapping.write_text('{"qwen": "Qwen3-VL-8B-Instruct-Q4_K_M"}')
     monkeypatch.setenv("TEACHER_MAP_FILE", str(mapping))
     assert VlmTeacher("qwen").model == "Qwen3-VL-8B-Instruct-Q4_K_M"
+
+
+def test_dataset_loader_skips_macos_junk_and_reads_roboflow(tmp_path):
+    import json
+    from PIL import Image
+    from experiments.datasets import load_coco, load_ocr
+
+    for split in ("train", "valid"):
+        d = tmp_path / split
+        d.mkdir()
+        Image.new("RGB", (100, 50)).save(d / "a.jpg")
+        (d / "_annotations.coco.json").write_text(json.dumps({
+            "images": [{"id": 1, "file_name": "a.jpg", "width": 100, "height": 50}],
+            "annotations": [{"id": 1, "image_id": 1, "category_id": 1, "bbox": [10, 5, 20, 10]}]}))
+        (d / "._annotations.coco.json").write_bytes(b"\x00\x05\x16\x07Mac OS X\xb0\xff")
+    items = load_coco(tmp_path)
+    assert sorted(i.frame_id for i in items) == ["train/a.jpg", "valid/a.jpg"]
+    assert items[0].boxes[0].x == 0.1 and items[0].boxes[0].h == 0.2
+
+    ocr = tmp_path / "ocr"
+    ocr.mkdir()
+    Image.new("RGB", (40, 10)).save(ocr / "A123BC77___40___10.png")
+    (ocr / "._A123BC77___40___10.png").write_bytes(b"\x00\x05\x16\x07")
+    assert [i.text for i in load_ocr(ocr)] == ["A123BC77"]

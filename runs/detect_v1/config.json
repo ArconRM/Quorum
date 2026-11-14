@@ -1,0 +1,11 @@
+{
+  "task": "detection",
+  "data": "/datasets/german-license-plates.v7i.coco",
+  "format": "coco",
+  "teachers": "grounding-dino,yolo-world-l,owlv2",
+  "prompt": "license plate",
+  "limit": 300,
+  "per_domain": false,
+  "seed": 0,
+  "out": "runs/detect_v1"
+}

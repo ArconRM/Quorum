@@ -1,7 +1,11 @@
 """
 Метрики по кэшу предсказаний (без GPU, секунды). Консенсус — тот же, что в платформе (quorum_worker.consensus).
 
-  python -m experiments.evaluate --out runs/detect_de [--weights grounding-dino-base=1,owlv2-base=0.8]
+  python -m experiments.evaluate --out runs/detect_de [--weights grounding-dino=1,owlv2=0.8] \
+      [--min-score grounding-dino=0.4,owlv2=0.25]
+
+--min-score отбрасывает боксы учителя ниже порога уверенности прямо при оценке. Учителей выгодно
+прогнать один раз с низким порогом, а подходящий порог подобрать здесь — без повторного инференса.
 
 Что считается и куда пишется (всё в <out>/report/):
   teachers.csv    качество каждого учителя и консенсуса против эталона
@@ -27,7 +31,7 @@ from quorum_worker.common import Box, normalize_text
 from quorum_worker.consensus import Vote, box_consensus, fleiss_kappa, text_consensus
 
 from .datasets import Item
-from .run import load_manifest
+from .run import load_manifest, resolve_out
 
 IOU = 0.5
 THRESHOLDS = [round(0.05 * i, 2) for i in range(0, 21)]
@@ -35,8 +39,9 @@ THRESHOLDS = [round(0.05 * i, 2) for i in range(0, 21)]
 
 # ---------------- сопоставление и метрики ----------------
 
-def match(pred: list[Box], truth: list[Box], iou: float = IOU) -> tuple[int, int, int]:
+def match(pred: list[Box], truth: list[Box], iou: float | None = None) -> tuple[int, int, int]:
     """Жадно по убыванию score: TP, FP, FN."""
+    iou = IOU if iou is None else iou
     used, tp = set(), 0
     for p in sorted(pred, key=lambda b: -b.score):
         best, best_iou = None, iou
@@ -107,9 +112,25 @@ def boxes_of(row: dict | None) -> list[Box]:
 
 # ---------------- основной расчёт ----------------
 
-def evaluate(out: Path, weights: dict[str, float]) -> dict:
+def apply_min_scores(preds: dict[str, dict[str, dict]], min_scores: dict[str, float]) -> None:
+    for teacher, threshold in min_scores.items():
+        if teacher not in preds:
+            print(f"! --min-score: учителя {teacher!r} нет среди {sorted(preds)}")
+            continue
+        for row in preds[teacher].values():
+            row["boxes"] = [b for b in row["boxes"] if len(b) < 5 or b[4] >= threshold]
+
+
+def evaluate(out: Path, weights: dict[str, float], min_scores: dict[str, float] | None = None,
+             only: list[str] | None = None) -> dict:
     items = load_manifest(out)
     preds = load_predictions(out)
+    if only:
+        unknown = set(only) - set(preds)
+        if unknown:
+            raise SystemExit(f"--teachers: нет предсказаний для {sorted(unknown)}; есть {sorted(preds)}")
+        preds = {t: preds[t] for t in only}
+    apply_min_scores(preds, min_scores or {})
     if not preds:
         raise SystemExit(f"No predictions in {out / 'predictions'}: run experiments.run first")
     task = "detection" if any(i.boxes for i in items) or not any(i.text for i in items) else "ocr"
@@ -137,7 +158,8 @@ def evaluate(out: Path, weights: dict[str, float]) -> dict:
     domains = _domain_rows(task, teachers, items, preds, frames)
     kappa = fleiss_kappa([[normalize_text(v.text) or "<none>" for v in f["votes"]] for f in frames]) if task == "ocr" else None
     return {"task": task, "teachers": teacher_rows, "sweep": sweep, "domains": domains, "frames": frames,
-            "kappa": kappa, "n": len(items), "weights": {t: weights.get(t, 1.0) for t in teachers}}
+            "kappa": kappa, "n": len(items), "weights": {t: weights.get(t, 1.0) for t in teachers},
+            "min_scores": min_scores or {}, "iou": IOU}
 
 
 def _teacher_metrics(task: str, name: str, items: list[Item], rows: dict) -> dict:
@@ -153,13 +175,23 @@ def _teacher_metrics(task: str, name: str, items: list[Item], rows: dict) -> dic
         p, r = tp / max(tp + fp, 1), tp / max(tp + fn, 1)
         return {"teacher": name, "precision": round(p, 4), "recall": round(r, 4),
                 "f1": round(2 * p * r / max(p + r, 1e-9), 4), "ap50": round(average_precision(scored, n_truth), 4),
-                "frame_accuracy": round(exact / len(items), 4)}
+                "frame_accuracy": round(exact / len(items), 4), **_health(items, rows)}
     texts = [normalize_text((rows.get(it.frame_id) or {}).get("text")) for it in items]
     return {"teacher": name,
             "exact_match": round(sum(t == it.text for t, it in zip(texts, items)) / len(items), 4),
             "cer": round(sum(cer(it.text, t) for t, it in zip(texts, items)) / len(items), 4),
             "read_rate": round(sum(bool(t) for t in texts) / len(items), 4),
-            "frame_accuracy": round(sum(t == it.text for t, it in zip(texts, items)) / len(items), 4)}
+            "frame_accuracy": round(sum(t == it.text for t, it in zip(texts, items)) / len(items), 4),
+            **_health(items, rows)}
+
+
+def _health(items: list[Item], rows: dict) -> dict:
+    """Диагностика учителя: сколько боксов он вообще выдаёт, на скольких кадрах упал или не отвечал.
+    Нулевые метрики при нуле боксов — сломанный учитель, а не плохой."""
+    present = [rows[i.frame_id] for i in items if i.frame_id in rows]
+    return {"boxes_per_frame": round(sum(len(r.get("boxes", [])) for r in present) / max(len(present), 1), 2),
+            "errors": sum(1 for r in present if r.get("error")),
+            "missing": len(items) - len(present)}
 
 
 def _consensus_metrics(task: str, frames: list[dict]) -> dict:
@@ -310,6 +342,8 @@ def summary(result: dict, report: Path) -> None:
     best = max((r for r in result["sweep"] if r["auto_precision"] != ""), key=lambda r: r["hybrid_label_accuracy"] - r["hybrid_human_fraction"])
     text = [f"# Разметка ансамблем: {result['task']}, {result['n']} кадров", "",
             f"Веса учителей: {result['weights']}", "",
+            f"Пороги уверенности при оценке: {result['min_scores'] or 'как при прогоне'}", "",
+            f"Порог IoU для совпадения с эталоном: {result['iou']}", "",
             "## Учителя и консенсус", "", table(result["teachers"]), ""]
     if result["kappa"] is not None:
         text += [f"Каппа Фляйса по ответам учителей: **{result['kappa']:.3f}**", ""]
@@ -326,11 +360,19 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--weights", default="", help="имя=вес через запятую; по умолчанию все 1")
+    ap.add_argument("--min-score", default="", help="имя=порог через запятую: боксы ниже порога отбрасываются")
+    ap.add_argument("--teachers", default="", help="только эти учителя, через запятую (абляция: вклад каждого)")
+    ap.add_argument("--iou", type=float, default=0.5, help="порог IoU совпадения с эталоном (0.3 — проверить, не в сдвиге ли рамок дело)")
+    ap.add_argument("--report", default="report", help="имя каталога отчёта внутри --out (для сравнения настроек)")
     args = ap.parse_args()
-    weights = {k.strip(): float(v) for k, v in (p.split("=") for p in args.weights.split(",") if "=" in p)}
+    parse = lambda text: {k.strip(): float(v) for k, v in (p.split("=") for p in text.split(",") if "=" in p)}
+    args.out = resolve_out(args.out)
+    global IOU
+    IOU = args.iou
 
-    result = evaluate(args.out, weights)
-    report = args.out / "report"
+    only = [t.strip() for t in args.teachers.split(",") if t.strip()]
+    result = evaluate(args.out, parse(args.weights), parse(args.min_score), only)
+    report = args.out / args.report
     report.mkdir(exist_ok=True)
     write_csv(report / "teachers.csv", result["teachers"])
     write_csv(report / "strategies.csv", result["sweep"])

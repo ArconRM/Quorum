@@ -9,6 +9,7 @@ ocr   — кропы номеров, текст зашит в имя файла:
 from __future__ import annotations
 
 import json
+import logging
 import random
 import re
 from dataclasses import dataclass, field
@@ -17,6 +18,29 @@ from pathlib import Path
 from quorum_worker.common import Box, normalize_text
 
 IMAGES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+
+log = logging.getLogger("experiments.datasets")
+
+
+def is_junk(path: Path) -> bool:
+    """
+    Служебные файлы, которые выглядят как данные. Архив, распакованный на macOS или собранный там,
+    содержит «._имя.json» и «._имя.png» (AppleDouble: метаданные Finder в двоичном виде) и каталог
+    __MACOSX — расширение у них настоящее, а содержимое нет.
+    """
+    return any(part.startswith("._") or part in ("__MACOSX", ".DS_Store") for part in path.parts)
+
+
+def _read_coco(path: Path) -> dict | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+        log.warning("Skip %s: not a readable JSON (%s)", path, e)
+        return None
+    if not isinstance(data, dict) or "images" not in data or "annotations" not in data:
+        log.info("Skip %s: not COCO annotations", path)
+        return None
+    return data
 
 
 @dataclass
@@ -37,11 +61,16 @@ class Item:
 
 
 def load_coco(root: Path) -> list[Item]:
+    # Курсовая: <страна>/labels/output_coco.json. Экспорт Roboflow: <split>/_annotations.coco.json рядом с картинками.
     files = [root / "labels" / "output_coco.json"] if (root / "labels" / "output_coco.json").is_file() \
         else sorted(root.glob("*/labels/output_coco.json")) or sorted(root.glob("**/*.json"))
+    files = [f for f in files if not is_junk(f.relative_to(root))]
     items: list[Item] = []
     for ann_file in files:
-        coco = json.loads(ann_file.read_text(encoding="utf-8"))
+        coco = _read_coco(ann_file)
+        if coco is None:
+            continue
+        log.info("Annotations: %s", ann_file.relative_to(root))
         images_dir = ann_file.parent.parent / "images"
         if not images_dir.is_dir():
             images_dir = ann_file.parent
@@ -67,7 +96,10 @@ def load_coco(root: Path) -> list[Item]:
                 if bw > 0 and bh > 0:
                     boxes.append(Box(x0, y0, bw, bh))
             domain = countries.get(img["id"]) or ann_file.parent.parent.name
-            items.append(Item(f"{ann_file.parent.parent.name}/{img['file_name']}", str(path.resolve()), boxes, "", domain))
+            # Путь относительно корня — уникален и между странами, и между train/valid/test.
+            items.append(Item(str(path.relative_to(root)), str(path.resolve()), boxes, "", domain))
+    if not items:
+        log.warning("No labelled images found under %s (checked %d annotation files)", root, len(files))
     return items
 
 
@@ -78,7 +110,7 @@ def text_from_name(name: str) -> str:
 
 def load_ocr(root: Path) -> list[Item]:
     items = []
-    for path in sorted(p for p in root.rglob("*") if p.suffix.lower() in IMAGES):
+    for path in sorted(p for p in root.rglob("*") if p.suffix.lower() in IMAGES and not is_junk(p.relative_to(root))):
         text = text_from_name(path.name)
         if sum(c.isdigit() for c in text) < 3:   # имя файла не похоже на номер — эталона нет
             continue

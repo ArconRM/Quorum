@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import time
 from pathlib import Path
 
@@ -28,6 +29,16 @@ def kind_for(task: str, teacher: str) -> str:
     if task == "ocr":
         return "Vlm"
     return "OpenVocabDetector" if teacher.lower().startswith(("grounding", "yolo-world", "yoloworld", "owl")) else "Detector"
+
+
+def resolve_out(path: Path) -> Path:
+    """
+    Относительный --out считается от EXPERIMENTS_ROOT (в контейнере — /app, куда смонтирован ./runs),
+    а не от текущего каталога: рабочий каталог образа — кэш весов, и результаты оказались бы
+    внутри docker-тома, а не в папке runs на хосте.
+    """
+    root = os.getenv("EXPERIMENTS_ROOT")
+    return path if path.is_absolute() or not root else Path(root) / path
 
 
 def load_manifest(out: Path) -> list[Item]:
@@ -47,6 +58,8 @@ def main() -> None:
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    args.out = resolve_out(args.out)
+    log.info("Results: %s", args.out)
 
     args.out.mkdir(parents=True, exist_ok=True)
     manifest = args.out / "manifest.jsonl"
