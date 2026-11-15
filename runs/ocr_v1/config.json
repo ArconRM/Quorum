@@ -1,0 +1,11 @@
+{
+  "task": "ocr",
+  "data": "/datasets/ocr_ru",
+  "format": null,
+  "teachers": "qwen3-vl-8b,gemma-3-4b,gemma-4-e4b,qwen3.5-9b",
+  "prompt": "license plate",
+  "limit": 1000,
+  "per_domain": false,
+  "seed": 0,
+  "out": "/app/runs/ocr_v1"
+}

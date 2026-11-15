@@ -1,0 +1,2 @@
+domain,frames,gemma-3-4b,gemma-4-e4b,qwen3-vl-8b,qwen3.5-9b,CONSENSUS,mean_agreement
+img,1000,0.89,0.862,0.963,0.967,0.977,0.936

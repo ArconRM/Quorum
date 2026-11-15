@@ -52,15 +52,21 @@ services:
 
   # OpenAI-совместимый сервер VLM. llama-swap держит в памяти одну модель и подменяет её по полю "model"
   # в запросе — то, что нужно для 16 ГБ: учителя Labeling и так идут по очереди.
-  # Модели (GGUF + mmproj) кладутся в ./models-gguf, список — в llama-swap.yaml.
+  # Список моделей — llama-swap.yaml. Модели скачиваются с HuggingFace сами при первом обращении
+  # и лежат в томе llm_cache; заранее скачать и проверить все — scripts/warmup_vlm.sh.
   llm:
     image: ghcr.io/mostlygeek/llama-swap:cuda
     restart: unless-stopped
     gpus: all
     ports: [ "8080:8080" ]
+    environment:
+      LLAMA_CACHE: /cache/llama.cpp
+      HF_HOME: /cache/huggingface
     volumes:
-      - ./models-gguf:/models:ro,z
+      - llm_cache:/cache
+      - ./models-gguf:/models:ro,z           # свои GGUF-файлы, если нужны (см. llama-swap.yaml)
       - ./llama-swap.yaml:/app/config.yaml:ro,z
 
 volumes:
   worker_cache:
+  llm_cache:

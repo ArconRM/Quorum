@@ -291,7 +291,7 @@ DEMO_FAILURE=1 ./scripts/demo.sh  # + сценарий с компенсацие
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
 ```
 
-Нужны NVIDIA Container Toolkit, GGUF-модели в `./models-gguf` (список — `llama-swap.yaml`), свои веса YOLO — в `./models`.
+Нужен NVIDIA Container Toolkit. VLM-учителя (список — `llama-swap.yaml`) скачиваются с HuggingFace сами; скачать и проверить заранее — `./scripts/warmup_vlm.sh`. Свои веса YOLO — в `./models`.
 Подробности, имена учителей и офлайн-эксперименты — `src/Worker/README.md`.
 
 ### Основные эндпоинты

@@ -20,6 +20,12 @@ from quorum_worker.teachers.vlm import VlmTeacher
     ("I cannot read the plate", ""),
     ("", ""),
     (None, ""),
+    # Путаница 0/O по позиции и «RUS» с флажка.
+    ("A1980077", "A198OO77"),
+    ("A2780092RUS", "A278OO92"),
+    ("A278OO92 RUS", "A278OO92"),
+    ("0123AB77", "O123AB77"),
+    ("Номер: B9780077 RUS", "B978OO77"),
     # Не российский формат, но похоже на номер.
     ("B-MW 1234", "BMW1234"),
 ])
@@ -87,6 +93,17 @@ def test_dataset_loader_skips_macos_junk_and_reads_roboflow(tmp_path):
     Image.new("RGB", (40, 10)).save(ocr / "A123BC77___40___10.png")
     (ocr / "._A123BC77___40___10.png").write_bytes(b"\x00\x05\x16\x07")
     assert [i.text for i in load_ocr(ocr)] == ["A123BC77"]
+
+
+@pytest.mark.parametrize("name,expected", [
+    ("A090XM44_0.png", "A090XM44"),
+    ("A159PA199_12.png", "A159PA199"),
+    ("A278OO92.png", "A278OO92"),
+    ("A123BC77___40___10.png", "A123BC77"),
+])
+def test_duplicate_suffix_is_not_part_of_plate(name, expected):
+    from experiments.datasets import text_from_name
+    assert text_from_name(name) == expected
 
 
 def test_max_box_area_drops_whole_car_boxes(monkeypatch):

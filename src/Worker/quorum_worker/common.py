@@ -58,6 +58,13 @@ HOMOGLYPHS = str.maketrans("АВЕКМНОРСТУХ", "ABEKMHOPCTYX")
 SEPARATORS = set(" \t\r\n-_|.,")
 PLATE_ALPHABET = "ABEKMHOPCTYX0123456789"
 RU_PLATE = re.compile(r"[ABEKMHOPCTYX]\d{3}[ABEKMHOPCTYX]{2}\d{2,3}")
+# Тот же номер, но с путаницей 0/O: модели пишут «A1980077» вместо «A198OO77».
+RU_PLATE_LOOSE = re.compile(r"[ABEKMHOPCTYX0][\dO]{3}[ABEKMHOPCTYX0]{2}[\dO]{2,3}")
+
+
+def _fix_ru_plate(s: str) -> str:
+    """Буква/цифра по позиции российского номера: в буквенных местах 0 → O, в цифровых O → 0."""
+    return "".join((c.replace("0", "O") if i in (0, 4, 5) else c.replace("O", "0")) for i, c in enumerate(s))
 
 
 def normalize_text(text: str | None) -> str:
@@ -84,6 +91,11 @@ def clean_vlm_answer(raw: str | None, require_digits: int = 3) -> str:
     strict = RU_PLATE.search(squashed)
     if strict:
         return strict.group(0)
+
+    # «RUS» с флажка региона — не часть номера; без него ищем номер с путаницей 0/O.
+    loose = RU_PLATE_LOOSE.search(re.sub(r"[^0-9A-Z]", "", squashed).replace("RUS", ""))
+    if loose:
+        return _fix_ru_plate(loose.group(0))
 
     # Не российский формат: берём самый длинный кусок из букв и цифр в первой непустой строке.
     line = next((l for l in text.splitlines() if l.strip()), "")

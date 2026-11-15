@@ -104,7 +104,9 @@ def load_coco(root: Path) -> list[Item]:
 
 
 def text_from_name(name: str) -> str:
+    """«A123BC77.png», «A123BC77___40___10.png», дубликат «A123BC77_0.png» → A123BC77."""
     stem = Path(name).stem.split("___")[0]
+    stem = re.sub(r"_\d+$", "", stem)   # номер дубликата, иначе он приклеится к региону
     return normalize_text(re.sub(r"[^0-9A-Za-zА-Яа-я]", "", stem))
 
 

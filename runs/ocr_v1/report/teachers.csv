@@ -1,0 +1,6 @@
+teacher,exact_match,cer,read_rate,frame_accuracy,boxes_per_frame,errors,missing
+gemma-3-4b,0.89,0.0436,0.999,0.89,0.0,0,0
+gemma-4-e4b,0.862,0.1227,0.889,0.862,0.0,0,0
+qwen3-vl-8b,0.963,0.0131,1.0,0.963,0.0,0,0
+qwen3.5-9b,0.967,0.0128,1.0,0.967,0.0,0,0
+CONSENSUS,0.977,0.0103,1.0,0.977,,,
