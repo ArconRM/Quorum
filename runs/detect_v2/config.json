@@ -1,0 +1,11 @@
+{
+  "task": "detection",
+  "data": "/datasets/brazil-plates.coco",
+  "format": null,
+  "teachers": "grounding-dino,owlv2,yolov8l-plates",
+  "prompt": "license plate",
+  "limit": 600,
+  "per_domain": false,
+  "seed": 0,
+  "out": "/app/runs/detect_v2"
+}
