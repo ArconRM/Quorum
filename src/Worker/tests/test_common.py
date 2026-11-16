@@ -42,6 +42,10 @@ def test_box_from_pixels_is_normalized_and_clipped():
 @pytest.mark.parametrize("name,cls,model", [
     ("grounding-dino-swin-b-1234", GroundingDinoTeacher, "IDEA-Research/grounding-dino-base"),
     ("grounding-dino-tiny", GroundingDinoTeacher, "IDEA-Research/grounding-dino-tiny"),
+    ("mm-grounding-dino-large", GroundingDinoTeacher, "openmmlab-community/mm_grounding_dino_large_all"),
+    ("mm-grounding-dino", GroundingDinoTeacher, "openmmlab-community/mm_grounding_dino_large_all"),
+    ("mm-grounding-dino-base-7", GroundingDinoTeacher, "openmmlab-community/mm_grounding_dino_base_all"),
+    ("llmdet-large", GroundingDinoTeacher, "iSEE-Laboratory/llmdet_large"),
     ("owlv2-large", Owlv2Teacher, "google/owlv2-large-patch14-ensemble"),
     ("owlv2-base-77", Owlv2Teacher, "google/owlv2-base-patch16-ensemble"),
 ])
@@ -116,3 +120,14 @@ def test_max_box_area_drops_whole_car_boxes(monkeypatch):
     monkeypatch.setenv("DETECTOR_MAX_BOX_AREA", "0.2")
     monkeypatch.setenv("GDINO_MAX_BOX_AREA", "0.1")
     assert _max_area("GDINO_MAX_BOX_AREA") == 0.1 and _max_area("OWLV2_MAX_BOX_AREA") == 0.2
+
+
+@pytest.mark.parametrize("name,kind", [
+    ("mm-grounding-dino-large", "OpenVocabDetector"),
+    ("llmdet-large", "OpenVocabDetector"),
+    ("owlv2-large", "OpenVocabDetector"),
+    ("yolov8l-plates", "Detector"),
+])
+def test_experiments_pick_teacher_kind_by_name(name, kind):
+    from experiments.run import kind_for
+    assert kind_for("detection", name) == kind

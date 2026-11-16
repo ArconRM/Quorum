@@ -34,6 +34,7 @@ tests/               pytest: консенсус сверен с C#-тестам�
 | kind | Имя | Модель |
 |---|---|---|
 | `OpenVocabDetector` | `grounding-dino`, `grounding-dino-tiny` | `IDEA-Research/grounding-dino-base` / `-tiny` |
+| `OpenVocabDetector` | `mm-grounding-dino[-base\|-large]`, `llmdet-large` | `openmmlab-community/mm_grounding_dino_*_all`, `iSEE-Laboratory/llmdet_large` — та же архитектура, пороги `GDINO_*` |
 | | `yolo-world-s/m/l/x` | `yolov8{s,m,l,x}-worldv2.pt` |
 | | `owlv2`, `owlv2-large` | `google/owlv2-base-patch16-ensemble` / `-large-patch14-ensemble` |
 | `Detector` | любое, например `yolov8l-plates` | файл `MODELS_DIR/yolov8l-plates.pt` |

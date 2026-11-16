@@ -1,0 +1,12 @@
+{
+  "task": "detection",
+  "data": "/datasets/camera",
+  "format": null,
+  "teachers": "grounding-dino,owlv2",
+  "prompt": "license plate",
+  "classes": "",
+  "limit": 800,
+  "per_domain": true,
+  "seed": 0,
+  "out": "/app/runs/camera_probe"
+}

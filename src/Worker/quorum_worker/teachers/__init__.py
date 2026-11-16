@@ -5,6 +5,8 @@
 (суффиксы вроде «-1234» из демо-скрипта не мешают):
 
   OpenVocabDetector:  grounding-dino[-tiny|-base]   → IDEA-Research/grounding-dino-*
+                      mm-grounding-dino[-base|-large] → openmmlab-community/mm_grounding_dino_*_all
+                      llmdet[-large]                → iSEE-Laboratory/llmdet_large
                       yolo-world[-s|-m|-l|-x]       → Ultralytics yolov8*-worldv2.pt
                       owlv2[-base|-large]           → google/owlv2-*-ensemble
   Detector:           <имя файла весов в MODELS_DIR без .pt>, например yolov8l-plates

@@ -42,6 +42,12 @@ def _prompt_classes(prompt: str) -> list[str]:
 
 def open_vocab(name: str) -> Teacher:
     n = name.lower()
+    # Потомки GroundingDINO с тем же интерфейсом в transformers (нужен transformers ≥ 4.55).
+    if n.startswith(("mm-grounding-dino", "mm_grounding_dino", "mmgroundingdino")):
+        size = "base" if "base" in n else "large"
+        return GroundingDinoTeacher(name, model_id=f"openmmlab-community/mm_grounding_dino_{size}_all")
+    if n.startswith("llmdet"):
+        return GroundingDinoTeacher(name, model_id="iSEE-Laboratory/llmdet_large")
     if n.startswith(("grounding-dino", "groundingdino", "grounding_dino")):
         return GroundingDinoTeacher(name, tiny="tiny" in n)
     if n.startswith(("yolo-world", "yoloworld", "yolo_world")):
@@ -49,7 +55,8 @@ def open_vocab(name: str) -> Teacher:
         return YoloWorldTeacher(name, size=m.group(1) if m else "l")
     if n.startswith("owlv2") or n.startswith("owl-v2"):
         return Owlv2Teacher(name, large="large" in n)
-    raise TeacherError(f"Unknown open-vocabulary teacher {name!r}: expected grounding-dino*, yolo-world*, owlv2*")
+    raise TeacherError(f"Unknown open-vocabulary teacher {name!r}: expected grounding-dino*, mm-grounding-dino*, "
+                       f"llmdet*, yolo-world*, owlv2*")
 
 
 class _HfDetector(Teacher):
@@ -88,9 +95,11 @@ class _HfDetector(Teacher):
 
 
 class GroundingDinoTeacher(_HfDetector):
-    def __init__(self, name: str, tiny: bool = False) -> None:
+    def __init__(self, name: str, tiny: bool = False, model_id: str | None = None) -> None:
         super().__init__(name)
-        self.model_id = f"IDEA-Research/grounding-dino-{'tiny' if tiny else 'base'}"
+        # model_id — другой чекпойнт той же архитектуры (MM-GroundingDINO, LLMDet): запрос, пороги
+        # и постобработка у них общие с GroundingDINO, поэтому и переменные окружения те же (GDINO_*).
+        self.model_id = model_id or f"IDEA-Research/grounding-dino-{'tiny' if tiny else 'base'}"
         self.threshold = _threshold("GDINO_THRESHOLD", 0.3)
         self.max_area = _max_area("GDINO_MAX_BOX_AREA")
 

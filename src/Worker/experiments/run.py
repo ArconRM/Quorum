@@ -28,7 +28,7 @@ log = logging.getLogger("experiments.run")
 def kind_for(task: str, teacher: str) -> str:
     if task == "ocr":
         return "Vlm"
-    return "OpenVocabDetector" if teacher.lower().startswith(("grounding", "yolo-world", "yoloworld", "owl")) else "Detector"
+    return "OpenVocabDetector" if teacher.lower().startswith(("grounding", "mm-grounding", "mm_grounding", "mmgrounding", "llmdet", "yolo-world", "yoloworld", "owl")) else "Detector"
 
 
 def resolve_out(path: Path) -> Path:

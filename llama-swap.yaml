@@ -36,3 +36,12 @@ models:
   # (в репозитории нет mmproj), закомментируй эту запись и не включай её в --teachers.
   qwen3.5-9b:
     cmd: ${server} -hf unsloth/Qwen3.5-9B-GGUF:Q4_K_M --reasoning-budget 0
+
+  gemma-4-12b:
+    cmd: ${server} -hf ggml-org/gemma-4-12b-it-GGUF:Q4_0 --reasoning-budget 0
+
+  qwen3.5-9b-q8:
+    cmd: ${server} -hf unsloth/Qwen3.5-9B-GGUF:Q8_0 --reasoning-budget 0
+
+  qwen3-vl-8b-q8:
+    cmd: ${server} -hf Qwen/Qwen3-VL-8B-Instruct-GGUF:Q8_0
