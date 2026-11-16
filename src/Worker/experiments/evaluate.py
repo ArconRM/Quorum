@@ -24,7 +24,9 @@ from __future__ import annotations
 
 import argparse
 import csv
+import itertools
 import json
+import random
 from pathlib import Path
 
 from quorum_worker.common import Box, normalize_text
@@ -35,6 +37,8 @@ from .run import load_manifest, resolve_out
 
 IOU = 0.5
 THRESHOLDS = [round(0.05 * i, 2) for i in range(0, 21)]
+SCORE_GRID = [round(0.05 * i, 2) for i in range(2, 15)]   # 0.10 … 0.70 — кандидаты порога уверенности учителя
+FULL_GRID_LIMIT = 5000                                     # больше комбинаций — покоординатный подбор
 
 
 # ---------------- сопоставление и метрики ----------------
@@ -132,9 +136,67 @@ def apply_min_scores(preds: dict[str, dict[str, dict]], min_scores: dict[str, fl
             row["boxes"] = [b for b in row["boxes"] if len(b) < 5 or b[4] >= threshold]
 
 
+def split_holdout(items: list[Item], fraction: float, seed: int = 0) -> tuple[set[str], set[str]]:
+    """Случайно делит кадры: (на подбор порогов, на отчёт). fraction — доля кадров, отложенная на отчёт."""
+    ids = sorted(i.frame_id for i in items)
+    random.Random(seed).shuffle(ids)
+    n_test = min(len(ids) - 1, max(1, round(len(ids) * fraction)))
+    return set(ids[n_test:]), set(ids[:n_test])
+
+
+def tune_min_scores(out: Path, weights: dict[str, float], fixed: dict[str, float], only: list[str] | None,
+                    max_area: dict[str, float], keep: set[str]) -> tuple[dict[str, float], float]:
+    """
+    Подбор порогов уверенности учителей на части кадров: максимум доли кадров, где консенсус полностью
+    совпал с эталоном (при равенстве — F1 консенсуса, затем более низкие пороги).
+    Пороги из --min-score не трогаются. Возвращает пороги всех учителей и достигнутую долю верных кадров.
+    Подбирать и отчитываться на одних и тех же кадрах нельзя: порог подстраивается под случайности выборки.
+    """
+    items = [i for i in load_manifest(out) if i.frame_id in keep]
+    preds = load_predictions(out)
+    if only:
+        preds = {t: preds[t] for t in only if t in preds}
+    apply_max_area(preds, max_area)
+    teachers = sorted(preds)
+    boxes = {t: {i.frame_id: boxes_of(preds[t].get(i.frame_id)) for i in items} for t in teachers}
+    free = [t for t in teachers if t not in fixed]
+
+    def quality(thresholds: dict[str, float]) -> tuple[float, float]:
+        ok = tp = fp = fn = 0
+        for it in items:
+            votes = [Vote(t, weights.get(t, 1.0), [b for b in boxes[t][it.frame_id] if b.score >= thresholds[t]], None)
+                     for t in teachers]
+            a, b, c = match(box_consensus(votes).boxes, it.boxes)
+            tp, fp, fn, ok = tp + a, fp + b, fn + c, ok + (b == c == 0)
+        return ok / max(len(items), 1), 2 * tp / max(2 * tp + fp + fn, 1)
+
+    best = {t: fixed.get(t, SCORE_GRID[0]) for t in teachers}
+    best_q = quality(best)
+    if len(SCORE_GRID) ** len(free) <= FULL_GRID_LIMIT:
+        for combo in itertools.product(SCORE_GRID, repeat=len(free)):
+            candidate = best | dict(zip(free, combo))
+            q = quality(candidate)
+            if q > best_q:
+                best, best_q = candidate, q
+    else:   # много учителей: по одному порогу за раз, пока есть улучшение
+        improved = True
+        while improved:
+            improved = False
+            for t in free:
+                for value in SCORE_GRID:
+                    q = quality(best | {t: value})
+                    if q > best_q:
+                        best, best_q, improved = best | {t: value}, q, True
+    return best, best_q[0]
+
+
 def evaluate(out: Path, weights: dict[str, float], min_scores: dict[str, float] | None = None,
-             only: list[str] | None = None, max_area: dict[str, float] | None = None) -> dict:
+             only: list[str] | None = None, max_area: dict[str, float] | None = None,
+             keep: set[str] | None = None) -> dict:
+    """keep — считать только по этим кадрам (отложенная часть при --holdout)."""
     items = load_manifest(out)
+    if keep is not None:
+        items = [i for i in items if i.frame_id in keep]
     preds = load_predictions(out)
     if only:
         unknown = set(only) - set(preds)
@@ -355,8 +417,12 @@ def summary(result: dict, report: Path) -> None:
             f"Веса учителей: {result['weights']}", "",
             f"Пороги уверенности при оценке: {result['min_scores'] or 'как при прогоне'}", "",
             f"Максимальная площадь бокса (доля кадра): {result['max_area'] or 'без ограничения'}", "",
-            f"Порог IoU для совпадения с эталоном: {result['iou']}", "",
-            "## Учителя и консенсус", "", table(result["teachers"]), ""]
+            f"Порог IoU для совпадения с эталоном: {result['iou']}", ""]
+    if h := result.get("holdout"):
+        text += [f"Отложенная выборка: пороги уверенности подобраны на {h['tune']} кадрах "
+                 f"(кадров верно: {h['tune_accuracy']:.4f}), все таблицы ниже — по остальным {h['test']} кадрам "
+                 f"(seed {h['seed']}). Заданы вручную: {h['fixed'] or 'нет'}.", ""]
+    text += ["## Учителя и консенсус", "", table(result["teachers"]), ""]
     if result["kappa"] is not None:
         text += [f"Каппа Фляйса по ответам учителей: **{result['kappa']:.3f}**", ""]
     text += ["## Стратегии валидации по порогу согласия", "",
@@ -389,6 +455,10 @@ def main() -> None:
     ap.add_argument("--teachers", default="", help="только эти учителя, через запятую (абляция: вклад каждого)")
     ap.add_argument("--iou", type=float, default=0.5, help="порог IoU совпадения с эталоном (0.3 — проверить, не в сдвиге ли рамок дело)")
     ap.add_argument("--report", default="report", help="имя каталога отчёта внутри --out (для сравнения настроек)")
+    ap.add_argument("--holdout", type=float, default=0.0,
+                    help="доля кадров, отложенная на отчёт (например, 0.5): пороги уверенности учителей подбираются "
+                         "на остальных кадрах, метрики считаются только по отложенным; --min-score фиксирует порог учителя")
+    ap.add_argument("--holdout-seed", type=int, default=0, help="seed разбиения для --holdout")
     args = ap.parse_args()
     parse = lambda text: {k.strip(): float(v) for k, v in (p.split("=") for p in text.split(",") if "=" in p)}
     args.out = resolve_out(args.out)
@@ -396,7 +466,20 @@ def main() -> None:
     IOU = args.iou
 
     only = [t.strip() for t in args.teachers.split(",") if t.strip()]
-    result = evaluate(args.out, parse(args.weights), parse(args.min_score), only, parse(args.max_area))
+    weights, min_scores, max_area = parse(args.weights), parse(args.min_score), parse(args.max_area)
+    if args.holdout:
+        if not 0 < args.holdout < 1:
+            raise SystemExit("--holdout: доля от 0 до 1, например 0.5")
+        items = load_manifest(args.out)
+        if not any(i.boxes for i in items):
+            raise SystemExit("--holdout работает только для детекции: у текстовых учителей нет порога уверенности")
+        tune_ids, test_ids = split_holdout(items, args.holdout, args.holdout_seed)
+        tuned, tune_accuracy = tune_min_scores(args.out, weights, min_scores, only, max_area, tune_ids)
+        result = evaluate(args.out, weights, tuned, only, max_area, keep=test_ids)
+        result["holdout"] = {"tune": len(tune_ids), "test": len(test_ids), "seed": args.holdout_seed,
+                             "tune_accuracy": tune_accuracy, "fixed": min_scores}
+    else:
+        result = evaluate(args.out, weights, min_scores, only, max_area)
     report = args.out / args.report
     report.mkdir(exist_ok=True)
     write_csv(report / "teachers.csv", result["teachers"])

@@ -60,7 +60,22 @@ class Item:
         return Item(d["frame_id"], d["path"], [Box(*b) for b in d["boxes"]], d["text"], d["domain"])
 
 
-def load_coco(root: Path) -> list[Item]:
+def _wanted_categories(coco: dict, classes: list[str], source: Path) -> set:
+    """id классов COCO с нужными именами (без учёта регистра). У Roboflow одно имя бывает у двух id."""
+    names = {c.lower() for c in classes}
+    categories = coco.get("categories", [])
+    ids = {c["id"] for c in categories if str(c.get("name", "")).lower() in names}
+    if not ids:
+        log.warning("%s: нет классов %s; есть %s", source, classes, sorted({str(c.get("name")) for c in categories}))
+    return ids
+
+
+def load_coco(root: Path, classes: list[str] | None = None) -> list[Item]:
+    """
+    classes — имена классов COCO, которые считаются объектом. Рамки остальных классов отбрасываются,
+    кадры без нужного класса в выборку не попадают: в смешанном наборе (номера + коды контейнеров)
+    чужие рамки в эталоне выглядели бы как пропуски учителей. По умолчанию берутся все классы.
+    """
     # Курсовая: <страна>/labels/output_coco.json. Экспорт Roboflow: <split>/_annotations.coco.json рядом с картинками.
     files = [root / "labels" / "output_coco.json"] if (root / "labels" / "output_coco.json").is_file() \
         else sorted(root.glob("*/labels/output_coco.json")) or sorted(root.glob("**/*.json"))
@@ -76,13 +91,18 @@ def load_coco(root: Path) -> list[Item]:
             images_dir = ann_file.parent
         by_image: dict = {}
         countries: dict = {}
+        wanted = _wanted_categories(coco, classes, ann_file.relative_to(root)) if classes else None
         for a in coco.get("annotations", []):
+            if wanted is not None and a.get("category_id") not in wanted:
+                continue
             by_image.setdefault(a["image_id"], []).append(a["bbox"])
             countries.setdefault(a["image_id"], (a.get("attributes") or {}).get("country"))
         for img in coco.get("images", []):
             path = images_dir / img["file_name"]
             # В курсовой из каталогов удаляли дубликаты, а в json записи остались — такие пропускаем.
             if not path.is_file():
+                continue
+            if wanted is not None and img["id"] not in by_image:
                 continue
             w, h = img.get("width"), img.get("height")
             if not w or not h:
@@ -121,9 +141,9 @@ def load_ocr(root: Path) -> list[Item]:
     return items
 
 
-def load(kind: str, root: Path) -> list[Item]:
+def load(kind: str, root: Path, classes: list[str] | None = None) -> list[Item]:
     if kind == "coco":
-        return load_coco(root)
+        return load_coco(root, classes)
     if kind == "ocr":
         return load_ocr(root)
     raise ValueError(f"Unknown dataset format {kind!r}: expected coco or ocr")

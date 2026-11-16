@@ -1,0 +1,2 @@
+domain,frames,grounding-dino,owlv2,yolov8l-plates,CONSENSUS,mean_agreement
+brazil-plates.coco,300,0.83,0.81,0.79,0.9033,0.8967

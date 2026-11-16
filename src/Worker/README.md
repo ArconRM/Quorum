@@ -75,6 +75,9 @@ python -m experiments.evaluate --out runs/detect_v1 --weights grounding-dino=1.5
 
 Пороги и фильтры подбираются при оценке, без повторного прогона: `--min-score учитель=порог`,
 `--max-area учитель=доля`, `--teachers a,b` (абляция), `--iou 0.3`, `--report имя` (отдельная папка отчёта).
+Смешанный набор COCO (в экспорте Roboflow рядом с номерами бывают другие классы): `run --classes имя_класса` оставляет
+в эталоне только этот класс. Честные цифры для отчёта: `evaluate --holdout 0.5` подбирает пороги уверенности на одной
+половине кадров и считает все таблицы по другой (`--min-score` фиксирует порог учителя, `--holdout-seed` меняет разбиение).
 Посмотреть боксы глазами: `python -m experiments.show --out runs/<имя> --errors <учитель>`.
 
 Отчёт — `runs/<имя>/report/`: `summary.md`, `teachers.csv`, `strategies.csv`, `domains.csv`, `tradeoff.png`, `agreement.png`.

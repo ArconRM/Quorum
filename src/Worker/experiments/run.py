@@ -52,6 +52,7 @@ def main() -> None:
     ap.add_argument("--format", choices=["coco", "ocr"], help="по умолчанию: coco для detection, ocr для ocr")
     ap.add_argument("--teachers", required=True, help="через запятую, имена как в реестре Labeling")
     ap.add_argument("--prompt", default="license plate")
+    ap.add_argument("--classes", default="", help="coco: имена классов эталона через запятую; остальные рамки и кадры без этих классов отбрасываются")
     ap.add_argument("--limit", type=int, help="размер случайной подвыборки")
     ap.add_argument("--per-domain", action="store_true", help="поровну кадров из каждого домена")
     ap.add_argument("--seed", type=int, default=0)
@@ -67,7 +68,8 @@ def main() -> None:
         items = load_manifest(args.out)
         log.info("Manifest exists: %d frames (выборка не меняется между запусками)", len(items))
     else:
-        items = sample(load(args.format or ("coco" if args.task == "detection" else "ocr"), args.data),
+        classes = [c.strip() for c in args.classes.split(",") if c.strip()]
+        items = sample(load(args.format or ("coco" if args.task == "detection" else "ocr"), args.data, classes or None),
                        args.limit, args.seed, args.per_domain)
         if not items:
             raise SystemExit(f"No labelled frames found in {args.data}")
