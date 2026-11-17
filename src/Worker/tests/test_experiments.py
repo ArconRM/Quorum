@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from experiments.datasets import load_coco
 from experiments.evaluate import SCORE_GRID, evaluate, split_holdout, tune_min_scores
 from experiments.run import load_manifest
@@ -73,3 +75,94 @@ def test_tuning_raises_threshold_when_it_removes_false_boxes(tmp_path):
     # пока порог не поднят выше 0.4.
     tuned, accuracy = tune_min_scores(out, {"a": 3.0}, {}, None, {}, ids)
     assert tuned["a"] > 0.4 and accuracy == 1.0
+
+
+# ---------------- experiments.student ----------------
+
+def _student_frames(tmp_path):
+    """Два дня по 10 кадров. В каждом дне у 4 кадров учитель b молчит: согласие 0.5, метка консенсуса пустая (неверная)."""
+    from experiments.evaluate import evaluate
+
+    truth = [0.1, 0.1, 0.2, 0.2]
+    out = tmp_path / "run"
+    (out / "predictions").mkdir(parents=True)
+    ids = [f"d{d}/images/f{k:02d}.jpg" for d in (1, 2) for k in range(10)]
+    (out / "manifest.jsonl").write_text("".join(json.dumps(
+        {"frame_id": i, "path": "/x/" + i, "text": "", "domain": i.split("/")[0], "boxes": [truth]}) + "\n" for i in ids))
+    row = lambda i, boxes: json.dumps({"frame_id": i, "text": None, "confidence": 0.9, "error": None, "boxes": boxes}) + "\n"
+    (out / "predictions" / "a.jsonl").write_text("".join(row(i, [truth + [0.9]]) for i in ids))
+    (out / "predictions" / "b.jsonl").write_text("".join(
+        row(i, [] if int(i[-6:-4]) < 4 else [truth + [0.8]]) for i in ids))
+    return evaluate(out, {}, {}, None, {})["frames"]
+
+
+def test_student_strategies_and_cycles_are_parsed():
+    from experiments.student import parse_cycles, parse_strategies
+
+    s = parse_strategies("none, auto@0.85,hybrid@0.7,manual")
+    assert [(x.kind, x.threshold) for x in s] == [("none", 0.0), ("auto", 0.85), ("hybrid", 0.7), ("manual", 0.0)]
+    c = parse_cycles(["a,b>c", "a,b,c>d,e"])
+    assert c[1].index == 2 and c[1].train == ("a", "b", "c") and c[1].test == ("d", "e")
+    for bad in (["a,b"], ["a>a"], [">c"]):
+        with pytest.raises(SystemExit):
+            parse_cycles(bad)
+    with pytest.raises(SystemExit):
+        parse_strategies("auto")
+
+
+def test_student_group_can_come_from_file_name():
+    import re
+    from experiments.student import group_of, stem_of
+
+    pattern = re.compile(r"_(2024\d{4})\d{6}_")
+    assert group_of("train/Placa_Dianteira_20240319004552_x.jpg", "brazil", pattern) == "20240319"
+    assert group_of("train/other.jpg", "brazil", pattern) == ""
+    assert group_of("2025-11-09/images/f.jpg", "2025-11-09", None) == "2025-11-09"
+    assert stem_of("2025-11-09/images/frame_1-2.jpg") == "2025-11-09__images__frame_1-2"
+
+
+def test_student_training_set_follows_the_strategy(tmp_path):
+    from experiments.student import Strategy, assemble
+
+    day1 = [f for f in _student_frames(tmp_path) if f["item"].domain == "d1"]
+    none = assemble(day1, Strategy("none", "none"))
+    assert (len(none.samples), none.human, none.dropped, none.label_accuracy) == (10, 0, 0, 0.6)
+    auto = assemble(day1, Strategy("auto@0.8", "auto", 0.8))
+    assert (len(auto.samples), auto.human, auto.dropped, auto.label_accuracy) == (6, 0, 4, 1.0)
+    hybrid = assemble(day1, Strategy("hybrid@0.8", "hybrid", 0.8))
+    assert (len(hybrid.samples), hybrid.human, hybrid.dropped, hybrid.label_accuracy) == (10, 4, 0, 1.0)
+    assert all(len(s.boxes) == 1 for s in hybrid.samples)          # спорные кадры получили эталонную рамку
+    manual = assemble(day1, Strategy("manual", "manual"))
+    assert (manual.human, manual.label_accuracy) == (10, 1.0)
+
+
+def test_student_experiment_runs_every_pair_once_and_resumes(tmp_path):
+    from experiments.student import parse_cycles, parse_strategies, run_experiment, write_report
+
+    frames = _student_frames(tmp_path)
+    groups = {f["item"].frame_id: f["item"].domain for f in frames}
+    calls = []
+
+    def fake_train(job, samples, start, epochs, imgsz, seed):
+        calls.append((job.name, len(samples), start))
+        return "weights-of-" + job.name
+
+    fake_eval = lambda job, weights, samples, imgsz: {"map50": len(samples) / 100, "map50_95": 0.1, "precision": 0.5, "recall": 0.5}
+    report = tmp_path / "report"
+    report.mkdir()
+    args = (frames, groups, parse_cycles(["d1>d2"]), parse_strategies("none,auto@0.8,hybrid@0.8,manual"),
+            report / "results.jsonl", tmp_path / "work", 1, 64, 0, "fresh", "yolov8n.pt")
+    rows = run_experiment(*args, train_fn=fake_train, eval_fn=fake_eval)
+    assert [c[1] for c in calls] == [10, 6, 10, 10] and all(c[2] == "yolov8n.pt" for c in calls)
+    assert [r["human_fraction"] for r in rows] == [0.0, 0.0, 0.4, 1.0]
+    assert all(r["test_frames"] == 10 and r["map50"] == 0.1 for r in rows)
+
+    again = run_experiment(*args, train_fn=fake_train, eval_fn=fake_eval)     # всё из кэша, обучение не вызывается
+    assert len(calls) == 4 and again == rows
+    write_report(rows, report, ["заголовок"])
+    summary = (report / "summary.md").read_text(encoding="utf-8")
+    assert "hybrid@0.8" in summary and "40.0%" in summary and (report / "results.csv").is_file()
+
+    with pytest.raises(SystemExit):
+        run_experiment(frames, groups, parse_cycles(["d1>d9"]), parse_strategies("none"), tmp_path / "r.jsonl",
+                       tmp_path / "w", 1, 64, 0, "fresh", "yolov8n.pt", train_fn=fake_train, eval_fn=fake_eval)

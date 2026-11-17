@@ -81,6 +81,10 @@ python -m experiments.evaluate --out runs/detect_v1 --weights grounding-dino=1.5
 половине кадров и считает все таблицы по другой (`--min-score` фиксирует порог учителя, `--holdout-seed` меняет разбиение).
 Посмотреть боксы глазами: `python -m experiments.show --out runs/<имя> --errors <учитель>`.
 
+Главный эксперимент — ученик на метках ансамбля: `python -m experiments.student --out runs/<имя> --cycle "A,B>C" ...`
+обучает YOLOv8n на метках групп A и B при стратегиях none / auto@T / hybrid@T / manual и меряет mAP на группе C по эталону.
+Группа — домен кадра (день съёмки) или `--group-regex` по имени файла; `--groups` печатает группы. Отчёт — `runs/<имя>/student/`.
+
 Отчёт — `runs/<имя>/report/`: `summary.md`, `teachers.csv`, `strategies.csv`, `domains.csv`, `tradeoff.png`, `agreement.png`.
 
 Форматы наборов: `coco` — каталоги стран из курсовой 2 курса (`<страна>/images`, `<страна>/labels/output_coco.json`);
