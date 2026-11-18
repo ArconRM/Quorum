@@ -1,0 +1,104 @@
+stages: [test, build, deploy]
+
+variables:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  NUGET_PACKAGES: "$CI_PROJECT_DIR/.nuget"
+  REGISTRY: "${SURNAME}-quorum"
+  TAG: "$CI_COMMIT_SHORT_SHA"
+
+default:
+  tags: [thinkserver]
+  interruptible: true
+  timeout: 30m
+
+.dotnet:
+  image: mcr.microsoft.com/dotnet/sdk:10.0
+  cache:
+    key:
+      files: [Directory.Packages.props]
+    paths: [.nuget/]
+  before_script:
+    - dotnet restore Quorum.slnx
+
+unit-tests:
+  extends: .dotnet
+  stage: test
+  script:
+    - dotnet test Quorum.slnx --no-restore --filter "Category!=Integration"
+
+integration-tests:
+  extends: .dotnet
+  stage: test
+  variables:
+    # job-контейнер говорит с Docker хоста через сокет; контейнеры тестов
+    # запускаются рядом, их порты доступны по адресу хоста
+    TESTCONTAINERS_HOST_OVERRIDE: host.docker.internal
+  script:
+    - dotnet test Quorum.slnx --no-restore --filter "Category=Integration"
+
+build-images:
+  stage: build
+  image: docker:29-cli
+  script:
+    - test -n "$SURNAME" || { echo "Не задана переменная SURNAME"; exit 1; }
+    - docker compose build
+    - docker compose config --images | grep "^$REGISTRY/"
+
+deploy:
+  stage: deploy
+  image: docker:29-cli
+  interruptible: false
+  resource_group: production
+  rules:
+    - if: $CI_COMMIT_BRANCH == "backend-only-for-deploy"
+  environment:
+    name: production
+  variables:
+    DEPLOY_PATH: "/home/${SURNAME}/quorum"
+    COMPOSE_FILES: "-f docker-compose.yml -f docker-compose.prod.yml"
+  before_script:
+    - |
+      for v in SURNAME DEPLOY_HOST DEPLOY_USER SSH_PRIVATE_KEY SSH_KNOWN_HOSTS; do
+        eval "val=\${$v:-}"
+        [ -n "$val" ] || { echo "Не задана переменная $v"; exit 1; }
+      done
+      [ -f "$SSH_PRIVATE_KEY" ] && [ -f "$SSH_KNOWN_HOSTS" ] || { echo "SSH_PRIVATE_KEY и SSH_KNOWN_HOSTS должны быть типа File"; exit 1; }
+    - apk add --no-cache openssh-client
+    - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+    - install -m 600 "$SSH_KNOWN_HOSTS" ~/.ssh/known_hosts
+    - install -m 600 "$SSH_PRIVATE_KEY" ~/.ssh/id_deploy
+    - export SSH_OPTS="-i $HOME/.ssh/id_deploy -p ${DEPLOY_PORT:-22} -o BatchMode=yes"
+    - export TARGET="$DEPLOY_USER@$DEPLOY_HOST"
+  script:
+    - IMAGES=$(docker compose config --images | grep "^$REGISTRY/")
+    - |
+      for img in $IMAGES; do
+        docker image inspect "$img" >/dev/null 2>&1 || { echo "Нет образа $img: build-images прошёл на другом раннере или Docker?"; exit 1; }
+      done
+    - ssh $SSH_OPTS "$TARGET" "mkdir -p '$DEPLOY_PATH'"
+    - docker save $IMAGES | gzip | ssh $SSH_OPTS "$TARGET" "gunzip | docker load"
+    - scp -i ~/.ssh/id_deploy -P "${DEPLOY_PORT:-22}" -o BatchMode=yes docker-compose.yml docker-compose.prod.yml "$TARGET:$DEPLOY_PATH/"
+    - |
+      {
+        echo "COMPOSE_PROJECT_NAME='${SURNAME}-quorum'"
+        echo "REGISTRY='$REGISTRY'"
+        echo "TAG='$TAG'"
+        for v in GATEWAY_PORT POSTGRES_PASSWORD RABBITMQ_PASSWORD JWT_KEY ADMIN_EMAIL ADMIN_PASSWORD; do
+          eval "val=\${$v:-}"
+          [ -z "$val" ] && continue
+          case "$val" in *"'"*) echo "В $v есть одинарная кавычка — смени значение" >&2; exit 1;; esac
+          echo "$v='$val'"
+        done
+      } > .env.deploy
+      ssh $SSH_OPTS "$TARGET" "umask 077 && cat > '$DEPLOY_PATH/.env'" < .env.deploy
+      rm -f .env.deploy
+    - ssh $SSH_OPTS "$TARGET" "cd '$DEPLOY_PATH' && docker compose $COMPOSE_FILES up -d --no-build --remove-orphans --wait --wait-timeout 180"
+    - ssh $SSH_OPTS "$TARGET" "cd '$DEPLOY_PATH' && docker compose $COMPOSE_FILES ps -a"
+  after_script:
+    - |
+      cleanup='docker images --format "{{.Repository}}:{{.Tag}}" | grep "^'"$REGISTRY"'/" | grep -v ":'"$TAG"'$" | xargs -r docker rmi 2>/dev/null; true'
+      [ "$CI_JOB_STATUS" = success ] || exit 0
+      apk add --no-cache openssh-client >/dev/null 2>&1
+      ssh -i ~/.ssh/id_deploy -p "${DEPLOY_PORT:-22}" -o BatchMode=yes "$DEPLOY_USER@$DEPLOY_HOST" "$cleanup" || true
+      sh -c "$cleanup"

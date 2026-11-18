@@ -1,0 +1,16 @@
+# Поверх docker-compose.yml на общем сервере:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# Убирает публикацию портов инфраструктуры (Postgres, Redis, RabbitMQ доступны только
+# внутри сети проекта) — иначе приложения разных людей на сервере конфликтуют по 5432/6379/15672.
+# Наружу смотрит только gateway, порт задаётся GATEWAY_PORT.
+
+services:
+  postgres:
+    ports: !reset []
+  redis:
+    ports: !reset []
+  rabbitmq:
+    ports: !reset []
+  gateway:
+    ports: !override
+      - "${GATEWAY_PORT:-8000}:8080"
