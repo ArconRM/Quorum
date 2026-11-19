@@ -1,0 +1,27 @@
+{
+  "out": "/app/runs/ocr_v2",
+  "cycle": [
+    "r1>r3",
+    "r1,r2>r3"
+  ],
+  "strategies": "none,auto@0.9,hybrid@0.6,hybrid@0.9,manual",
+  "group_regex": "",
+  "random_groups": 3,
+  "teachers": "qwen3-vl-8b,qwen3.5-9b,gemma-4-12b",
+  "weights": "",
+  "min_score": "",
+  "max_area": "",
+  "tune_frames": 200,
+  "epochs": null,
+  "imgsz": 640,
+  "student": "yolo",
+  "base": null,
+  "init": "fresh",
+  "seed": 0,
+  "report": "student",
+  "groups": false,
+  "min_score_used": {},
+  "task": "ocr",
+  "epochs_used": 100,
+  "base_used": ""
+}

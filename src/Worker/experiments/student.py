@@ -9,6 +9,15 @@
       --cycle "2025-11-09,2025-11-15,2025-11-16>2025-11-29,2025-11-30" \\
       --strategies none,auto@0.85,hybrid@0.7,hybrid@0.85,manual
 
+Другие ученики-детекторы (experiments.tvdet): --student ssdlite или --student fasterrcnn.
+
+Распознавание текста (прогон experiments.run --task ocr) определяется по манифесту само: ученик — CRNN,
+метрики — доля точно распознанных номеров и CER. Для набора без естественных групп (дней) кадры
+делятся на случайные группы r1…rN флагом --random-groups N:
+
+  python -m experiments.student --out runs/ocr_v2 --teachers qwen3-vl-8b,qwen3.5-9b,gemma-4-12b \
+      --random-groups 3 --cycle "r1>r3" --cycle "r1,r2>r3"
+
 Вход — каталог прогона experiments.run (manifest.jsonl + predictions/). Кадры делятся на группы:
 по умолчанию группа — домен кадра (для набора с камеры это день съёмки), --group-regex достаёт группу
 из имени файла. Цикл «A,B>C»: учимся на метках групп A и B, проверяем на группе C по эталону.
@@ -100,6 +109,20 @@ def group_of(frame_id: str, domain: str, pattern: re.Pattern | None) -> str:
     return m.group(1) if m else ""
 
 
+def random_groups(frame_ids: list[str], n: int, seed: int) -> dict[str, str]:
+    """Случайное разбиение на n равных групп r1…rn — для наборов без дней съёмки (кропы номеров)."""
+    ids = sorted(frame_ids)
+    random.Random(seed).shuffle(ids)
+    return {fid: f"r{i % n + 1}" for i, fid in enumerate(ids)}
+
+
+# Задача → ключ главной метрики и столбцы отчёта (подпись, ключ).
+METRICS = {
+    "detection": ("map50", [("mAP50", "map50"), ("mAP50-95", "map50_95"), ("P", "precision"), ("R", "recall")]),
+    "ocr": ("accuracy", [("точность", "accuracy"), ("CER", "cer")]),
+}
+
+
 def stem_of(frame_id: str) -> str:
     """frame_id в экспериментах — относительный путь; для имени файла в наборе YOLO убираем каталоги."""
     return str(Path(frame_id).with_suffix("")).replace("/", "__").replace("\\", "__")
@@ -117,21 +140,21 @@ class Assembled:
 
 
 def assemble(frames: list[dict], strategy: Strategy) -> Assembled:
-    """frames — элементы evaluate()['frames']: item (эталон), consensus, correct."""
+    """frames — элементы evaluate()['frames']: item (эталон), consensus, correct. Метка — рамки или текст."""
     samples, human, dropped, right = [], 0, 0, 0
     for f in frames:
         item, consensus = f["item"], f["consensus"]
         confident = consensus.agreement >= strategy.threshold
         if strategy.kind == "manual" or (strategy.kind == "hybrid" and not confident):
-            boxes, ok = item.boxes, True
+            boxes, text, ok = item.boxes, item.text, True
             human += 1
         elif strategy.kind == "auto" and not confident:
             dropped += 1
             continue
         else:
-            boxes, ok = consensus.boxes, f["correct"]
+            boxes, text, ok = consensus.boxes, consensus.text or "", f["correct"]
         right += ok
-        samples.append(Sample(stem_of(item.frame_id), item.path, list(boxes)))
+        samples.append(Sample(stem_of(item.frame_id), item.path, list(boxes), text))
     return Assembled(samples, len(frames), human, dropped, round(right / max(len(samples), 1), 4))
 
 
@@ -171,11 +194,62 @@ def eval_yolo(job_dir: Path, weights: str, samples: list[Sample], imgsz: int) ->
             "precision": round(float(m.box.mp), 4), "recall": round(float(m.box.mr), 4)}
 
 
+def train_crnn(job_dir: Path, samples: list[Sample], start: str, epochs: int, imgsz: int, seed: int) -> str:
+    """CRNN с нуля (или с весов start). Лучшая эпоха выбирается по части тех же меток, как у YOLO."""
+    import torch
+    from quorum_worker.students import crnn
+
+    random.seed(seed)
+    torch.manual_seed(seed)
+    job_dir.mkdir(parents=True, exist_ok=True)
+    artifact = job_dir / "crnn.pt"
+    previous = os.environ.pop("CRNN_PRETRAINED", None)   # ученик стартует только с явно заданных весов
+    try:
+        for event in crnn.train(samples, epochs, start, artifact):
+            if hasattr(event, "loss"):
+                log.info("CRNN epoch %d/%d, loss %.4f", event.epoch, event.epochs, event.loss)
+    finally:
+        if previous is not None:
+            os.environ["CRNN_PRETRAINED"] = previous
+    return str(artifact)
+
+
+def eval_crnn(job_dir: Path, weights: str, samples: list[Sample], imgsz: int) -> dict:
+    """Доля точно распознанных номеров и CER по эталону."""
+    import torch
+    from quorum_worker import vram
+    from quorum_worker.students import crnn
+
+    device = vram.device()
+    model = crnn._load(weights, device)
+    model.eval()
+    hit = total = 0
+    edits = chars = 0
+    with torch.inference_mode():
+        for images, _, _, texts in crnn._batches(samples, augment=False, shuffle=False):
+            for pred, truth in zip(crnn.decode(model(images.to(device))), texts):
+                hit += pred == truth
+                total += 1
+                edits += _levenshtein(pred, truth)
+                chars += len(truth)
+    return {"accuracy": round(hit / max(total, 1), 4), "cer": round(edits / max(chars, 1), 4)}
+
+
+def _levenshtein(a: str, b: str) -> int:
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1]
+
+
 # ---------------- эксперимент ----------------
 
 def run_experiment(frames: list[dict], groups: dict[str, str], cycles: list[Cycle], strategies: list[Strategy],
                    results_file: Path, work: Path, epochs: int, imgsz: int, seed: int, init: str, base: str,
-                   train_fn: Callable = train_yolo, eval_fn: Callable = eval_yolo) -> list[dict]:
+                   train_fn: Callable = train_yolo, eval_fn: Callable = eval_yolo, task: str = "detection") -> list[dict]:
     """Все пары (цикл, стратегия). Готовые строки берутся из results.jsonl — запуск можно прерывать."""
     done = {}
     if results_file.is_file():
@@ -194,7 +268,7 @@ def run_experiment(frames: list[dict], groups: dict[str, str], cycles: list[Cycl
     rows = []
     for c in cycles:
         pool = [f for g in c.train for f in by_group[g]]
-        test = [Sample(stem_of(f["item"].frame_id), f["item"].path, list(f["item"].boxes))
+        test = [Sample(stem_of(f["item"].frame_id), f["item"].path, list(f["item"].boxes), f["item"].text)
                 for g in c.test for f in by_group[g]]
         for s in strategies:
             if (c.index, s.name) in done:
@@ -206,9 +280,10 @@ def run_experiment(frames: list[dict], groups: dict[str, str], cycles: list[Cycl
                    "human_frames": a.human, "human_fraction": round(a.human / max(a.pool, 1), 4),
                    "dropped_frames": a.dropped, "label_accuracy": a.label_accuracy, "test_frames": len(test)}
             job = work / f"c{c.index}_{re.sub(r'[^0-9a-zA-Z]+', '_', s.name)}"
-            if not any(x.boxes for x in a.samples):
+            key, columns = METRICS[task]
+            if not any(x.boxes or x.text for x in a.samples):
                 # Ни одной принятой метки с объектом — учить нечему, ученик остаётся необученным.
-                row |= {"map50": 0.0, "map50_95": 0.0, "precision": 0.0, "recall": 0.0, "note": "нет меток с объектами"}
+                row |= {k: 0.0 for _, k in columns} | {"note": "нет меток с объектами"}
             else:
                 previous = work / f"c{c.index - 1}_{re.sub(r'[^0-9a-zA-Z]+', '_', s.name)}" / "best.pt"
                 start = str(previous) if init == "previous" and previous.is_file() else base
@@ -219,7 +294,7 @@ def run_experiment(frames: list[dict], groups: dict[str, str], cycles: list[Cycl
                 if Path(weights).is_file() and Path(weights) != job / "best.pt":
                     (job / "best.pt").write_bytes(Path(weights).read_bytes())
                 row |= eval_fn(job, weights, test, imgsz)
-            log.info("Cycle %d, %s: mAP50 %.4f", c.index, s.name, row["map50"])
+            log.info("Cycle %d, %s: %s %.4f", c.index, s.name, key, row[key])
             with results_file.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
             rows.append(row)
@@ -228,7 +303,9 @@ def run_experiment(frames: list[dict], groups: dict[str, str], cycles: list[Cycl
 
 # ---------------- отчёт ----------------
 
-def write_report(rows: list[dict], report: Path, header: list[str]) -> None:
+def write_report(rows: list[dict], report: Path, header: list[str], task: str = "detection") -> None:
+    key, columns = METRICS[task]
+    label = dict((k, name) for name, k in columns)[key]
     keys = list(dict.fromkeys(k for r in rows for k in r))
     with (report / "results.csv").open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=keys)
@@ -238,20 +315,21 @@ def write_report(rows: list[dict], report: Path, header: list[str]) -> None:
     cycles = sorted({r["cycle"] for r in rows})
     strategies = list(dict.fromkeys(r["strategy"] for r in rows))
     cell = {(r["cycle"], r["strategy"]): r for r in rows}
-    text = ["# Ученик на метках ансамбля", "", *header, "", "## mAP50 ученика на проверочных группах", "",
+    text = ["# Ученик на метках ансамбля", "", *header, "", f"## {label} ученика на проверочных группах", "",
             "| стратегия | " + " | ".join(f"цикл {c}" for c in cycles) + " | среднее |",
             "|---|" + "---|" * (len(cycles) + 1)]
     for s in strategies:
-        values = [cell[(c, s)]["map50"] for c in cycles if (c, s) in cell]
-        text.append(f"| {s} | " + " | ".join(f"{cell[(c, s)]['map50']:.3f}" if (c, s) in cell else "" for c in cycles)
+        values = [cell[(c, s)][key] for c in cycles if (c, s) in cell]
+        text.append(f"| {s} | " + " | ".join(f"{cell[(c, s)][key]:.3f}" if (c, s) in cell else "" for c in cycles)
                     + f" | {sum(values) / max(len(values), 1):.3f} |")
     text += ["", "## Ручной труд и чистота меток (нарастающим итогом по обучающим группам цикла)", "",
-             "| цикл | стратегия | кадров в обучении | человеку | доля человеку | отброшено | меток верно | mAP50 | mAP50-95 | P | R |",
-             "|---|---|---|---|---|---|---|---|---|---|---|"]
+             "| цикл | стратегия | кадров в обучении | человеку | доля человеку | отброшено | меток верно | "
+             + " | ".join(name for name, _ in columns) + " |",
+             "|---|---|---|---|---|---|---|" + "---|" * len(columns)]
     for r in rows:
         text.append(f"| {r['cycle']} | {r['strategy']} | {r['train_frames']} | {r['human_frames']} | "
                     f"{r['human_fraction']:.1%} | {r['dropped_frames']} | {r['label_accuracy']:.1%} | "
-                    f"{r['map50']:.3f} | {r['map50_95']:.3f} | {r['precision']:.3f} | {r['recall']:.3f} |")
+                    + " | ".join(f"{r.get(k, 0.0):.3f}" for _, k in columns) + " |")
     text += ["", "Циклы:", ""] + [f"- цикл {c}: обучение на {cell[(c, strategies[0])]['train_groups']}, "
                                    f"проверка на {cell[(c, strategies[0])]['test_groups']} "
                                    f"({cell[(c, strategies[0])]['test_frames']} кадров)"
@@ -267,11 +345,11 @@ def write_report(rows: list[dict], report: Path, header: list[str]) -> None:
         return
     fig, ax = plt.subplots(figsize=(8, 4.5))
     for s in strategies:
-        pts = [(c, cell[(c, s)]["map50"]) for c in cycles if (c, s) in cell]
+        pts = [(c, cell[(c, s)][key]) for c in cycles if (c, s) in cell]
         ax.plot([p[0] for p in pts], [p[1] for p in pts], "o-", label=s)
     ax.set_xticks(cycles)
     ax.set_xlabel("Цикл адаптации")
-    ax.set_ylabel("mAP50 ученика на новых кадрах")
+    ax.set_ylabel(f"{label} ученика на новых кадрах")
     ax.set_title("Качество ученика по циклам")
     ax.grid(alpha=0.3)
     ax.legend(fontsize=8)
@@ -283,11 +361,11 @@ def write_report(rows: list[dict], report: Path, header: list[str]) -> None:
     for s in strategies:
         mine = [cell[(c, s)] for c in cycles if (c, s) in cell]
         x = sum(r["human_fraction"] for r in mine) / len(mine)
-        y = sum(r["map50"] for r in mine) / len(mine)
+        y = sum(r[key] for r in mine) / len(mine)
         ax.plot([x], [y], "o", markersize=9)
         ax.annotate(s, (x, y), textcoords="offset points", xytext=(6, 5), fontsize=8)
     ax.set_xlabel("Доля кадров, размеченных человеком (среднее по циклам)")
-    ax.set_ylabel("mAP50 ученика (среднее по циклам)")
+    ax.set_ylabel(f"{label} ученика (среднее по циклам)")
     ax.set_xlim(-0.03, 1.05)
     ax.set_title("Ручной труд ↔ качество ученика")
     ax.grid(alpha=0.3)
@@ -302,15 +380,19 @@ def main() -> None:
     ap.add_argument("--cycle", action="append", default=[], help="«обучающие,группы>проверочные,группы»; можно несколько раз")
     ap.add_argument("--strategies", default="none,auto@0.85,hybrid@0.7,hybrid@0.85,manual")
     ap.add_argument("--group-regex", default="", help="регулярное выражение с одной скобкой: группа из имени файла вместо домена")
+    ap.add_argument("--random-groups", type=int, default=0, help="N: случайные группы r1…rN вместо доменов (seed — --seed)")
     ap.add_argument("--teachers", default="", help="только эти учителя, через запятую")
     ap.add_argument("--weights", default="", help="имя=вес через запятую")
     ap.add_argument("--min-score", default="", help="имя=порог через запятую; учителя без порога подбираются (--tune-frames)")
     ap.add_argument("--max-area", default="", help="имя=доля кадра через запятую")
     ap.add_argument("--tune-frames", type=int, default=200,
                     help="размер калибровочной выборки из обучающих групп первого цикла для подбора порогов; 0 — не подбирать")
-    ap.add_argument("--epochs", type=int, default=30)
+    ap.add_argument("--epochs", type=int, help="по умолчанию 30 для YOLO и SSDlite, 12 для Faster R-CNN, 100 для CRNN")
     ap.add_argument("--imgsz", type=int, default=int(os.getenv("YOLO_IMGSZ", "640")))
-    ap.add_argument("--base", default="yolov8n.pt", help="веса необученного ученика")
+    ap.add_argument("--student", choices=["yolo", "ssdlite", "fasterrcnn"], default="yolo",
+                    help="ученик-детектор: yolo (Ultralytics, веса --base), ssdlite или fasterrcnn (torchvision, веса COCO)")
+    ap.add_argument("--base", help="веса необученного ученика; по умолчанию yolov8n.pt для детекции, "
+                                   "для OCR — CRNN со случайными весами")
     ap.add_argument("--init", choices=["fresh", "previous"], default="fresh",
                     help="fresh — каждый цикл учим с --base на всех накопленных метках; previous — дообучаем веса прошлого цикла")
     ap.add_argument("--seed", type=int, default=0)
@@ -323,13 +405,19 @@ def main() -> None:
 
     pattern = re.compile(args.group_regex) if args.group_regex else None
     items = load_manifest(out)
-    groups = {i.frame_id: group_of(i.frame_id, i.domain, pattern) for i in items}
+    task = "ocr" if any(i.text for i in items) and not any(i.boxes for i in items) else "detection"
+    if args.random_groups > 0:
+        groups = random_groups([i.frame_id for i in items], args.random_groups, args.seed)
+    else:
+        groups = {i.frame_id: group_of(i.frame_id, i.domain, pattern) for i in items}
+    epochs = args.epochs or (100 if task == "ocr" else 12 if args.student == "fasterrcnn" else 30)
+    base = args.base if args.base is not None else ("" if task == "ocr" else "yolov8n.pt")
     if args.groups or not args.cycle:
         counts: dict[str, list[int]] = {}
         for i in items:
             c = counts.setdefault(groups[i.frame_id], [0, 0])
             c[0] += 1
-            c[1] += bool(i.boxes)
+            c[1] += bool(i.boxes or i.text)
         print("Группы (кадров всего / с объектами):")
         for g in sorted(counts):
             print(f"  {g or '<без группы>'}: {counts[g][0]} / {counts[g][1]}")
@@ -343,7 +431,7 @@ def main() -> None:
     weights, min_scores, max_area = parse(args.weights), parse(args.min_score), parse(args.max_area)
 
     header = []
-    if args.tune_frames > 0:
+    if args.tune_frames > 0 and task == "detection":   # у VLM нет порога уверенности — подбирать нечего
         candidates = sorted(i.frame_id for i in items if groups[i.frame_id] in cycles[0].train)
         random.Random(args.seed).shuffle(candidates)
         calibration = set(candidates[:args.tune_frames])
@@ -352,7 +440,12 @@ def main() -> None:
                       f"размеченных человеком (кадров верно на калибровке: {accuracy:.4f}).")
     header.append(f"Пороги уверенности учителей: {min_scores or 'как при прогоне'}; "
                   f"максимальная площадь рамки: {max_area or 'без ограничения'}; веса: {weights or 'равные'}.")
-    header.append(f"Ученик: {args.base}, эпох {args.epochs}, размер входа {args.imgsz}, "
+    if task == "detection" and args.student != "yolo":
+        student = {"ssdlite": "SSDlite320-MobileNetV3 (COCO)", "fasterrcnn": "Faster R-CNN MobileNetV3-FPN (COCO)"}[args.student]
+        base = ""
+    else:
+        student = (base or "yolov8n.pt") if task == "detection" else f"CRNN ({base or 'случайные веса'})"
+    header.append(f"Ученик: {student}, эпох {epochs}, размер входа {args.imgsz if task == 'detection' else '32×128'}, "
                   f"{'каждый цикл с нуля на накопленных метках' if args.init == 'fresh' else 'дообучение весов прошлого цикла'}.")
     for line in header:
         log.info(line)
@@ -360,11 +453,22 @@ def main() -> None:
     result = ev.evaluate(out, weights, min_scores, only, max_area)
     report = out / args.report
     report.mkdir(exist_ok=True)
-    (report / "config.json").write_text(json.dumps(vars(args) | {"out": str(out), "min_score_used": min_scores},
+    (report / "config.json").write_text(json.dumps(vars(args) | {"out": str(out), "min_score_used": min_scores,
+                                                                  "task": task, "epochs_used": epochs, "base_used": base},
                                                    ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    if task == "ocr":
+        fns = {"train_fn": train_crnn, "eval_fn": eval_crnn}
+    elif args.student != "yolo":
+        from functools import partial
+        from . import tvdet
+        fns = {"train_fn": partial(tvdet.train, args.student),
+               "eval_fn": lambda job, weights, samples, imgsz: tvdet.evaluate(args.student, weights, samples, imgsz)}
+    else:
+        fns = {}
     rows = run_experiment(result["frames"], groups, cycles, strategies, report / "results.jsonl",
-                          work_root(out.name + "_" + args.report), args.epochs, args.imgsz, args.seed, args.init, args.base)
-    write_report(rows, report, header)
+                          work_root(out.name + "_" + args.report), epochs, args.imgsz, args.seed, args.init, base,
+                          task=task, **fns)
+    write_report(rows, report, header, task)
     print((report / "summary.md").read_text(encoding="utf-8"))
 
 

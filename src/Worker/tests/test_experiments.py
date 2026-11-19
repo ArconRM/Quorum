@@ -166,3 +166,126 @@ def test_student_experiment_runs_every_pair_once_and_resumes(tmp_path):
     with pytest.raises(SystemExit):
         run_experiment(frames, groups, parse_cycles(["d1>d9"]), parse_strategies("none"), tmp_path / "r.jsonl",
                        tmp_path / "w", 1, 64, 0, "fresh", "yolov8n.pt", train_fn=fake_train, eval_fn=fake_eval)
+
+
+# ---------------- experiments.student: распознавание текста ----------------
+
+def _ocr_frames(tmp_path):
+    """10 кропов. У двух учитель b читает иначе: согласие 0.5, консенсус может быть неверным."""
+    from experiments.evaluate import evaluate
+
+    out = tmp_path / "ocr"
+    (out / "predictions").mkdir(parents=True)
+    ids = [f"img/A{k:03d}BC77.png" for k in range(10)]
+    (out / "manifest.jsonl").write_text("".join(json.dumps(
+        {"frame_id": i, "path": "/x/" + i, "text": i[4:12], "domain": "img", "boxes": []}) + "\n" for i in ids))
+    row = lambda i, text: json.dumps({"frame_id": i, "text": text, "confidence": None, "error": None, "boxes": []}) + "\n"
+    (out / "predictions" / "a.jsonl").write_text("".join(row(i, i[4:12]) for i in ids))
+    (out / "predictions" / "b.jsonl").write_text("".join(row(i, "X999XX99" if k < 2 else i[4:12]) for k, i in enumerate(ids)))
+    return evaluate(out, {}, {}, None, {})["frames"]
+
+
+def test_random_groups_are_balanced_and_repeatable():
+    from experiments.student import random_groups
+
+    ids = [f"f{k}" for k in range(10)]
+    g = random_groups(ids, 3, seed=0)
+    assert sorted(set(g.values())) == ["r1", "r2", "r3"]
+    assert sorted(list(g.values()).count(x) for x in ("r1", "r2", "r3")) == [3, 3, 4]
+    assert g == random_groups(list(reversed(ids)), 3, seed=0) and g != random_groups(ids, 3, seed=1)
+
+
+def test_ocr_training_set_carries_text_labels(tmp_path):
+    from experiments.student import Strategy, assemble
+
+    frames = _ocr_frames(tmp_path)
+    hybrid = assemble(frames, Strategy("hybrid@0.8", "hybrid", 0.8))
+    assert hybrid.human == 2 and all(s.text == s.frame_id[5:13] for s in hybrid.samples)
+    manual = assemble(frames, Strategy("manual", "manual"))
+    assert [s.text for s in manual.samples] == [f["item"].text for f in frames]
+
+
+def test_ocr_experiment_reports_accuracy(tmp_path):
+    from experiments.student import parse_cycles, parse_strategies, random_groups, run_experiment, write_report
+
+    frames = _ocr_frames(tmp_path)
+    groups = random_groups([f["item"].frame_id for f in frames], 2, seed=0)
+    seen = []
+    fake_train = lambda job, samples, start, epochs, imgsz, seed: seen.append([s.text for s in samples]) or "w"
+    fake_eval = lambda job, weights, samples, imgsz: {"accuracy": 0.9, "cer": 0.02}
+    report = tmp_path / "report"
+    report.mkdir()
+    rows = run_experiment(frames, groups, parse_cycles(["r1>r2"]), parse_strategies("none,manual"),
+                          report / "results.jsonl", tmp_path / "work", 1, 64, 0, "fresh", "",
+                          train_fn=fake_train, eval_fn=fake_eval, task="ocr")
+    assert [r["accuracy"] for r in rows] == [0.9, 0.9] and all(len(t) == 5 for t in seen)
+    write_report(rows, report, ["заголовок"], "ocr")
+    summary = (report / "summary.md").read_text(encoding="utf-8")
+    assert "точность ученика" in summary and "CER" in summary
+
+
+def test_crnn_student_trains_and_evaluates(tmp_path, monkeypatch):
+    pytest.importorskip("torch")
+    cv2 = pytest.importorskip("cv2")
+    import numpy as np
+    from quorum_worker.students import Sample
+    from experiments.student import eval_crnn, train_crnn
+
+    samples = []
+    for k in range(12):
+        text = f"A{k:03d}BC77"
+        img = np.full((40, 160), 255, np.uint8)
+        cv2.putText(img, text, (4, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, 0, 2)
+        path = tmp_path / f"{text}.png"
+        cv2.imwrite(str(path), img)
+        samples.append(Sample(text, str(path), [], text))
+    monkeypatch.setenv("CRNN_PRETRAINED", "/nonexistent.pt")
+    weights = train_crnn(tmp_path / "job", samples, "", 2, 0, 0)
+    assert (tmp_path / "job" / "crnn.pt").is_file() and weights.endswith("crnn.pt")
+    import os
+    assert os.environ["CRNN_PRETRAINED"] == "/nonexistent.pt"       # переменная окружения восстановлена
+    m = eval_crnn(tmp_path / "job", weights, samples, 0)
+    assert set(m) == {"accuracy", "cer"} and 0.0 <= m["accuracy"] <= 1.0 and m["cer"] >= 0.0
+
+
+# ---------------- experiments.tvdet: SSDlite и Faster R-CNN ----------------
+
+def test_detection_metrics_perfect_partial_and_empty():
+    from experiments.tvdet import detection_metrics
+
+    gt = [[[10, 10, 50, 30]], [[100, 100, 140, 120]], []]
+    perfect = [([[10, 10, 50, 30]], [0.9]), ([[100, 100, 140, 120]], [0.8]), ([], [])]
+    assert detection_metrics(perfect, gt) == {"map50": 1.0, "map50_95": 1.0, "precision": 1.0, "recall": 1.0}
+    half = [([[10, 10, 50, 30]], [0.9]), ([], []), ([[0, 0, 5, 5]], [0.95])]   # одна найдена, одна ложная
+    m = detection_metrics(half, gt)
+    assert 0.24 < m["map50"] < 0.26 and m["recall"] == 0.5   # точность 0.5 до полноты 0.5
+    shifted = [([[14, 10, 54, 30]], [0.9]), ([[100, 100, 140, 120]], [0.8]), ([], [])]  # IoU 0.82 у первой
+    m = detection_metrics(shifted, gt)
+    assert m["map50"] == 1.0 and m["map50_95"] < 1.0
+    assert detection_metrics([([], [])], [[]])["map50"] == 0.0
+
+
+@pytest.mark.parametrize("kind", ["ssdlite", "fasterrcnn"])
+def test_torchvision_students_train_and_evaluate(tmp_path, kind, monkeypatch):
+    pytest.importorskip("torchvision")
+    cv2 = pytest.importorskip("cv2")
+    import numpy as np
+    from quorum_worker.common import Box
+    from quorum_worker.students import Sample
+    from experiments import tvdet
+
+    monkeypatch.setenv("YOLO_DATALOADER_WORKERS", "0")
+    samples = []
+    for k in range(6):
+        img = np.full((180, 320, 3), 200, np.uint8)
+        boxes = []
+        if k % 3:   # каждый третий кадр пустой — отрицательный пример
+            cv2.rectangle(img, (40 + 10 * k, 60), (120 + 10 * k, 90), (0, 0, 0), -1)
+            boxes = [Box((40 + 10 * k) / 320, 60 / 180, 80 / 320, 30 / 180, 1.0)]
+        path = tmp_path / f"f{k}.jpg"
+        cv2.imwrite(str(path), img)
+        samples.append(Sample(f"f{k}", str(path), boxes))
+    weights = tvdet.train(kind, tmp_path / "job", samples, "", 1, 320, 0, pretrained=False)
+    assert (tmp_path / "job" / f"{kind}.pt").is_file() and weights.endswith(f"{kind}.pt")
+    m = tvdet.evaluate(kind, weights, samples, 320, pretrained=False)
+    assert set(m) == {"map50", "map50_95", "precision", "recall"} and all(0.0 <= v <= 1.0 for v in m.values())

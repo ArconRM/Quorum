@@ -5,7 +5,8 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1 \
     WORKER_MODE=real \
     HF_HOME=/cache/huggingface \
-    YOLO_CONFIG_DIR=/cache/ultralytics
+    YOLO_CONFIG_DIR=/cache/ultralytics \
+    TORCH_HOME=/cache/torch
 
 # libgl/libglib нужны OpenCV внутри ultralytics даже в headless-сборке; git — для пакета CLIP ниже.
 RUN apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 git && rm -rf /var/lib/apt/lists/*

@@ -84,6 +84,10 @@ python -m experiments.evaluate --out runs/detect_v1 --weights grounding-dino=1.5
 Главный эксперимент — ученик на метках ансамбля: `python -m experiments.student --out runs/<имя> --cycle "A,B>C" ...`
 обучает YOLOv8n на метках групп A и B при стратегиях none / auto@T / hybrid@T / manual и меряет mAP на группе C по эталону.
 Группа — домен кадра (день съёмки) или `--group-regex` по имени файла; `--groups` печатает группы. Отчёт — `runs/<имя>/student/`.
+Для прогона OCR ученик — CRNN с нуля, метрики — точность и CER; кадры без дней делятся на случайные группы
+(`--random-groups 3 --cycle "r1>r3" --cycle "r1,r2>r3"`).
+Другие ученики-детекторы: `--student ssdlite` (SSDlite320-MobileNetV3) или `--student fasterrcnn` (Faster R-CNN
+MobileNetV3-FPN) — torchvision, старт с весов COCO, метрики считаются в `experiments/tvdet.py`.
 
 Отчёт — `runs/<имя>/report/`: `summary.md`, `teachers.csv`, `strategies.csv`, `domains.csv`, `tradeoff.png`, `agreement.png`.
 

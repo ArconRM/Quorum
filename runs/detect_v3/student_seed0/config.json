@@ -1,0 +1,25 @@
+{
+  "out": "/app/runs/detect_v3",
+  "cycle": [
+    "20240319>20240320"
+  ],
+  "strategies": "none,auto@0.85,hybrid@0.7,hybrid@0.85,manual",
+  "group_regex": "_(2024\\d{4})\\d{6}_",
+  "teachers": "grounding-dino,owlv2,yolov8l-plates",
+  "weights": "",
+  "min_score": "",
+  "max_area": "grounding-dino=0.1",
+  "tune_frames": 200,
+  "epochs": 30,
+  "imgsz": 640,
+  "base": "yolov8n.pt",
+  "init": "fresh",
+  "seed": 0,
+  "report": "student_seed0",
+  "groups": false,
+  "min_score_used": {
+    "grounding-dino": 0.25,
+    "owlv2": 0.4,
+    "yolov8l-plates": 0.65
+  }
+}
