@@ -1,0 +1,12 @@
+{
+  "task": "detection",
+  "data": "/datasets/aau-person",
+  "format": null,
+  "teachers": "owlv2-large,llmdet-large,mm-grounding-dino-large",
+  "prompt": "person",
+  "classes": "",
+  "limit": null,
+  "per_domain": false,
+  "seed": 0,
+  "out": "/app/runs/aau_person"
+}
