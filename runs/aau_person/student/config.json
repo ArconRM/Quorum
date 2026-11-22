@@ -1,0 +1,32 @@
+{
+  "out": "/app/runs/aau_person",
+  "cycle": [
+    "1>2",
+    "1,2>3",
+    "1,2,3>4,5"
+  ],
+  "strategies": "none,auto@0.85,hybrid@0.7,hybrid@0.85,manual",
+  "group_regex": "-(\\d)/images",
+  "random_groups": 0,
+  "teachers": "",
+  "weights": "",
+  "min_score": "",
+  "max_area": "",
+  "tune_frames": 200,
+  "epochs": null,
+  "imgsz": 640,
+  "student": "yolo",
+  "base": null,
+  "init": "fresh",
+  "seed": 0,
+  "report": "student",
+  "groups": false,
+  "min_score_used": {
+    "llmdet-large": 0.1,
+    "mm-grounding-dino-large": 0.7,
+    "owlv2-large": 0.25
+  },
+  "task": "detection",
+  "epochs_used": 30,
+  "base_used": "yolov8n.pt"
+}
