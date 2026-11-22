@@ -289,3 +289,32 @@ def test_torchvision_students_train_and_evaluate(tmp_path, kind, monkeypatch):
     assert (tmp_path / "job" / f"{kind}.pt").is_file() and weights.endswith(f"{kind}.pt")
     m = tvdet.evaluate(kind, weights, samples, 320, pretrained=False)
     assert set(m) == {"map50", "map50_95", "precision", "recall"} and all(0.0 <= v <= 1.0 for v in m.values())
+
+
+# ---------------- experiments.drift ----------------
+
+def test_drift_matrix_marks_training_days_and_resumes(tmp_path, monkeypatch):
+    from experiments.datasets import Item
+    from experiments.drift import run, student_models, write_report
+    from quorum_worker.common import Box
+
+    monkeypatch.setattr("quorum_worker.students.yolo.write_dataset", lambda root, splits: root / "data.yaml")
+    items = [Item(f"{d}/images/f{k}.jpg", f"/x/{d}/f{k}.jpg", [Box(0.1, 0.1, 0.1, 0.05)], "", d)
+             for d in ("2025-11-09", "2025-11-16") for k in range(2)]
+    report = tmp_path / "report"
+    report.mkdir()
+    (report / "config.json").write_text(json.dumps({"cycle": ["2025-11-09>2025-11-16"]}))
+    work = tmp_path / "work"
+    (work / "c1_none").mkdir(parents=True)
+    (work / "c1_none" / "best.pt").write_bytes(b"w")
+    models = [("до адаптации", "/m.pt", set())] + student_models(report, work, ["none", "manual"])
+    assert [m[0] for m in models] == ["до адаптации", "цикл 1, none"] and models[1][2] == {"2025-11-09"}
+    calls = []
+    fake = lambda data, w, imgsz, project: calls.append((w, data.parent.name)) or {"map50": 0.5, "map50_95": 0.3, "precision": 0.6, "recall": 0.7}
+    rows = run(items, models, ["2025-11-09", "2025-11-16"], work / "drift", 640, eval_fn=fake, results=report / "drift.jsonl")
+    assert len(calls) == 4 and [r["in_train"] for r in rows] == [False, False, True, False]
+    again = run(items, models, ["2025-11-09", "2025-11-16"], work / "drift", 640, eval_fn=fake, results=report / "drift.jsonl")
+    assert len(calls) == 4 and again == rows
+    write_report(rows, report, ["2025-11-09", "2025-11-16"])
+    md = (report / "drift.md").read_text(encoding="utf-8")
+    assert "0.500*" in md and "| до адаптации | 0.500 | 0.500 |" in md
