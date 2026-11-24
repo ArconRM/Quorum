@@ -318,3 +318,17 @@ def test_drift_matrix_marks_training_days_and_resumes(tmp_path, monkeypatch):
     write_report(rows, report, ["2025-11-09", "2025-11-16"])
     md = (report / "drift.md").read_text(encoding="utf-8")
     assert "0.500*" in md and "| до адаптации | 0.500 | 0.500 |" in md
+
+
+def test_student_fraction_subsamples_pool_for_learning_curve(tmp_path):
+    from experiments.student import parse_cycles, parse_strategies, run_experiment
+
+    frames = _student_frames(tmp_path)
+    groups = {f["item"].frame_id: f["item"].domain for f in frames}
+    sizes = []
+    fake_train = lambda job, samples, start, epochs, imgsz, seed: sizes.append(len(samples)) or "w"
+    fake_eval = lambda job, weights, samples, imgsz: {"map50": 0.5, "map50_95": 0.3, "precision": 0.5, "recall": 0.5}
+    rows = run_experiment(frames, groups, parse_cycles(["d1>d2"]), parse_strategies("none,manual"),
+                          tmp_path / "r.jsonl", tmp_path / "w", 1, 64, 0, "fresh", "yolov8n.pt",
+                          train_fn=fake_train, eval_fn=fake_eval, fraction=0.3)
+    assert sizes == [3, 3] and all(r["pool_frames"] == 3 and r["test_frames"] == 10 for r in rows)

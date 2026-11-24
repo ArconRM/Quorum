@@ -1,0 +1,31 @@
+{
+  "out": "/app/runs/camera_v1",
+  "cycle": [
+    "2025-11-09,2025-11-15,2025-11-16,2025-11-29,2025-11-30>2025-12-06"
+  ],
+  "strategies": "none,manual",
+  "group_regex": "",
+  "random_groups": 0,
+  "teachers": "",
+  "weights": "",
+  "min_score": "",
+  "max_area": "mm-grounding-dino-large=0.03,llmdet-large=0.03,owlv2-large=0.03",
+  "tune_frames": 200,
+  "epochs": null,
+  "imgsz": 640,
+  "student": "yolo",
+  "base": null,
+  "init": "fresh",
+  "seed": 0,
+  "fraction": 0.1,
+  "report": "student_frac_0.1",
+  "groups": false,
+  "min_score_used": {
+    "llmdet-large": 0.45,
+    "mm-grounding-dino-large": 0.1,
+    "owlv2-large": 0.6
+  },
+  "task": "detection",
+  "epochs_used": 30,
+  "base_used": "yolov8n.pt"
+}

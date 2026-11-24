@@ -249,7 +249,8 @@ def _levenshtein(a: str, b: str) -> int:
 
 def run_experiment(frames: list[dict], groups: dict[str, str], cycles: list[Cycle], strategies: list[Strategy],
                    results_file: Path, work: Path, epochs: int, imgsz: int, seed: int, init: str, base: str,
-                   train_fn: Callable = train_yolo, eval_fn: Callable = eval_yolo, task: str = "detection") -> list[dict]:
+                   train_fn: Callable = train_yolo, eval_fn: Callable = eval_yolo, task: str = "detection",
+                   fraction: float = 1.0) -> list[dict]:
     """Все пары (цикл, стратегия). Готовые строки берутся из results.jsonl — запуск можно прерывать."""
     done = {}
     if results_file.is_file():
@@ -268,6 +269,11 @@ def run_experiment(frames: list[dict], groups: dict[str, str], cycles: list[Cycl
     rows = []
     for c in cycles:
         pool = [f for g in c.train for f in by_group[g]]
+        if fraction < 1.0:
+            # Кривая обучения: та же случайная доля накопленных кадров для всех стратегий цикла.
+            pool = sorted(pool, key=lambda f: f["item"].frame_id)
+            random.Random(seed).shuffle(pool)
+            pool = pool[:max(1, round(len(pool) * fraction))]
         test = [Sample(stem_of(f["item"].frame_id), f["item"].path, list(f["item"].boxes), f["item"].text)
                 for g in c.test for f in by_group[g]]
         for s in strategies:
@@ -396,6 +402,8 @@ def main() -> None:
     ap.add_argument("--init", choices=["fresh", "previous"], default="fresh",
                     help="fresh — каждый цикл учим с --base на всех накопленных метках; previous — дообучаем веса прошлого цикла")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--fraction", type=float, default=1.0,
+                    help="доля накопленных кадров цикла для обучения (кривая обучения), выборка зависит от --seed")
     ap.add_argument("--report", default="student", help="имя каталога отчёта внутри --out")
     ap.add_argument("--groups", action="store_true", help="только показать группы и число кадров в них")
     args = ap.parse_args()
@@ -445,6 +453,8 @@ def main() -> None:
         base = ""
     else:
         student = (base or "yolov8n.pt") if task == "detection" else f"CRNN ({base or 'случайные веса'})"
+    if args.fraction < 1.0:
+        header.append(f"Кривая обучения: в каждом цикле берётся {args.fraction:.0%} накопленных кадров (случайно).")
     header.append(f"Ученик: {student}, эпох {epochs}, размер входа {args.imgsz if task == 'detection' else '32×128'}, "
                   f"{'каждый цикл с нуля на накопленных метках' if args.init == 'fresh' else 'дообучение весов прошлого цикла'}.")
     for line in header:
@@ -467,7 +477,7 @@ def main() -> None:
         fns = {}
     rows = run_experiment(result["frames"], groups, cycles, strategies, report / "results.jsonl",
                           work_root(out.name + "_" + args.report), epochs, args.imgsz, args.seed, args.init, base,
-                          task=task, **fns)
+                          task=task, fraction=args.fraction, **fns)
     write_report(rows, report, header, task)
     print((report / "summary.md").read_text(encoding="utf-8"))
 
