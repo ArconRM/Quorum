@@ -34,6 +34,7 @@ CYCLES=(
 
 log()   { echo "$(date '+%F %T') $*" | tee -a "$OUT/report.md"; }
 post()  { curl -sf -X POST "$GW$1" -H "Content-Type: application/json" ${3:+-H "Authorization: Bearer $3"} -d "$2"; }
+patch() { curl -sf -X PATCH "$GW$1" -H "Content-Type: application/json" ${3:+-H "Authorization: Bearer $3"} -d "$2"; }
 get()   { curl -sf "$GW$1" ${2:+-H "Authorization: Bearer $2"}; }
 login() { post /identity/auth/login "{\"email\":\"$1\",\"password\":\"$2\"}" | jq -r .token; }
 
@@ -79,11 +80,22 @@ echo "# Сквозной прогон Quorum на кадрах камеры" > "
 log "Gateway $GW, кадры $DATA, лимит на день: ${LIMIT:-0} (0 — все)"
 
 log "== Вход: администратор и разметчик"
-ADMIN=$(login admin@quorum.local 'Admin123!')
+# Сразу после «docker compose up» Identity ещё применяет миграции — ждём до двух минут.
+ADMIN=""
+for _ in $(seq 1 24); do
+  ADMIN=$(login admin@quorum.local 'Admin123!' 2>/dev/null) && [[ -n "$ADMIN" && "$ADMIN" != null ]] && break
+  sleep 5
+done
+[[ -n "$ADMIN" && "$ADMIN" != null ]] || { log "! не удалось войти в $GW — проверь: docker compose logs identity gateway"; exit 1; }
 post /identity/auth/register "{\"email\":\"annotator$RND@quorum.local\",\"password\":\"Passw0rd!\",\"fullName\":\"Разметчик\"}" >/dev/null
 ANNOTATOR=$(login "annotator$RND@quorum.local" 'Passw0rd!')
 
 log "== Камера и учителя"
+# Реестр учителей общий для всех камер: разметка задачи берёт всех активных учителей Detection.
+# Учителя прошлых запусков (в том числе demo.sh с YOLO-World) иначе попадут в ансамбль и сломают согласие.
+for id in $(get "/labeling/teachers?task=Detection" "$ADMIN" | jq -r '.[] | select(.isActive) | .id'); do
+  patch "/labeling/teachers/$id" '{"isActive":false}' "$ADMIN" >/dev/null && log "   выключен прежний учитель $id" || true
+done
 CAM=$(post /datasets/cameras '{"name":"Камера курсовой '"$RND"'","task":"Detection","prompt":"license plate","minFramesPerCycle":30,"cycleIntervalHours":720}' "$ADMIN" | jq -r .id)
 log "   камера $CAM"
 for t in owlv2-large llmdet-large mm-grounding-dino-large; do
