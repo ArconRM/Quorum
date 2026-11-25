@@ -4,7 +4,8 @@ namespace Training.Domain.Evaluations;
 
 /// <summary>
 /// Корень агрегата: сравнение кандидата с опубликованной моделью на отложенной выборке цикла.
-/// Правило: публикуем, если опубликованной модели нет или кандидат лучше не меньше чем на MinImprovement.
+/// Правило: опубликованной модели нет — публикуем; есть, но выборка меньше minHoldout — Inconclusive;
+/// иначе публикуем, только если кандидат строго лучше базовой модели более чем на MinImprovement.
 /// Обе модели оцениваются на одних и тех же новых кадрах — это и есть проверка «стало ли лучше на текущих условиях».
 /// </summary>
 public sealed class Evaluation : Entity
@@ -23,13 +24,18 @@ public sealed class Evaluation : Entity
     public DateTime CreatedAt { get; private set; }
 
     public static Evaluation Decide(Guid cycleId, Guid candidateVersionId, Guid? baselineVersionId, string metricName,
-        double candidateScore, double? baselineScore, int holdoutSize, double minImprovement)
+        double candidateScore, double? baselineScore, int holdoutSize, double minImprovement, int minHoldout)
     {
+        if (minHoldout < 0) throw new DomainException("Minimal holdout size cannot be negative");
         if (minImprovement < 0) throw new DomainException("Minimal improvement cannot be negative");
         if (baselineVersionId is not null && baselineScore is null)
             throw new DomainException("Baseline score is required when there is a published model");
 
-        var promote = baselineScore is null || candidateScore >= baselineScore.Value + minImprovement;
+        var decision =
+            baselineVersionId is null ? EvaluationDecision.Promote
+            : holdoutSize < minHoldout ? EvaluationDecision.Inconclusive
+            : candidateScore > baselineScore!.Value + minImprovement ? EvaluationDecision.Promote
+            : EvaluationDecision.Reject;
         return new Evaluation
         {
             Id = Guid.NewGuid(),
@@ -41,7 +47,7 @@ public sealed class Evaluation : Entity
             BaselineScore = baselineScore,
             HoldoutSize = holdoutSize,
             MinImprovement = minImprovement,
-            Decision = promote ? EvaluationDecision.Promote : EvaluationDecision.Reject,
+            Decision = decision,
             CreatedAt = DateTime.UtcNow,
         };
     }

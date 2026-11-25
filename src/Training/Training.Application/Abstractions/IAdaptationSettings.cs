@@ -14,4 +14,7 @@ public interface IAdaptationSettings
 
     /// <summary>На сколько кандидат должен превзойти текущую модель, чтобы его опубликовали.</summary>
     double MinImprovement { get; }
+
+    /// <summary>Минимум кадров в отложенной выборке для сравнения с опубликованной моделью; меньше — исход Inconclusive.</summary>
+    int MinHoldoutFrames { get; }
 }

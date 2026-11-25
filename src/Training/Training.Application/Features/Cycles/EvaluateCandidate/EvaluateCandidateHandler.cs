@@ -42,7 +42,8 @@ public sealed class EvaluateCandidateHandler(
             var scores = await worker.EvaluateAsync(candidate.Task.ToString(), candidate.ArtifactPath, published?.ArtifactPath, holdout, ct);
 
             var evaluation = Evaluation.Decide(cycle.Id, candidate.Id, published?.Id, scores.MetricName,
-                scores.Candidate, published is null ? null : scores.Baseline, holdout.Count, settings.MinImprovement);
+                scores.Candidate, published is null ? null : scores.Baseline, holdout.Count, settings.MinImprovement,
+                settings.MinHoldoutFrames);
             evaluations.Add(evaluation);
             candidate.RecordEvaluation(scores.Candidate);
 

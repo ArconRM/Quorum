@@ -11,4 +11,5 @@ internal sealed class ConfigAdaptationSettings(IConfiguration config) : IAdaptat
     public int MinTrainingLabels => config.GetValue("Adaptation:MinTrainingLabels", 10);
     public int Epochs => config.GetValue("Adaptation:Epochs", 10);
     public double MinImprovement => config.GetValue("Adaptation:MinImprovement", 0.0);
+    public int MinHoldoutFrames => config.GetValue("Adaptation:MinHoldoutFrames", 20);
 }
