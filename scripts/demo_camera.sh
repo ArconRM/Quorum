@@ -33,7 +33,14 @@ CYCLES=(
 )
 
 log()   { echo "$(date '+%F %T') $*" | tee -a "$OUT/report.md"; }
-post()  { curl -sf -X POST "$GW$1" -H "Content-Type: application/json" ${3:+-H "Authorization: Bearer $3"} -d "$2"; }
+# При ошибке печатаем ответ сервера: иначе curl -f молча обрывает скрипт.
+post()  {
+  local out code
+  out=$(curl -s -w '\n%{http_code}' -X POST "$GW$1" -H "Content-Type: application/json" ${3:+-H "Authorization: Bearer $3"} -d "$2") || { echo "! POST $1: нет ответа от $GW" >&2; return 1; }
+  code=${out##*$'\n'}; out=${out%$'\n'*}
+  [[ $code == 2* ]] || { echo "! POST $1 → HTTP $code: $out" >&2; return 1; }
+  printf '%s' "$out"
+}
 patch() { curl -sf -X PATCH "$GW$1" -H "Content-Type: application/json" ${3:+-H "Authorization: Bearer $3"} -d "$2"; }
 get()   { curl -sf "$GW$1" ${2:+-H "Authorization: Bearer $2"}; }
 login() { post /identity/auth/login "{\"email\":\"$1\",\"password\":\"$2\"}" | jq -r .token; }
